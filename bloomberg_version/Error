@@ -1,0 +1,66 @@
+import bql
+
+bq = bql.Service()
+
+ticker = 'AAPL US Equity'
+
+request = bql.Request(
+    ticker,
+    {
+        'Implied Volatility': bq.data.IMPLIED_VOLATILITY(),
+        'Fut Call/Put': bq.data.FUT_CALL_IMPLIED_VOLATILITY()/bq.data.FUT_PUT_IMPLIED_VOLATILITY(),
+        ' Call/Put': bq.data.CALL_IMP_VOL_60D()/bq.data.PUT_IMP_VOL_60D(),
+    }
+)
+
+try:
+    response = bq.execute(request)
+    data = pd.concat([data_item.df() for data_item in response], axis=1)
+    print(data)
+    print("\n✓ Options data available for", ticker)
+except Exception as e:
+    print(f"✗ Options data error: {e}")
+
+
+
+import bql
+from datetime import datetime, timedelta
+
+bq = bql.Service()
+
+# Test single ticker
+ticker = 'AAPL US Equity'
+end_date = datetime.now()
+start_date = end_date - timedelta(days=30)
+
+request = bql.Request(
+    ticker,
+    {
+        'Date': bq.data.px_open()['DATE'],
+        'Open': bq.data.px_open()['value'],
+        'High': bq.data.px_high()['value'],
+        'Low': bq.data.px_low()['value'],
+        'Close': bq.data.px_last()['value'],
+        'Volume': bq.data.px_volume()['value'],
+    },
+    with_params={'fill':'na',
+        'dates': bq.func.range(
+            start_date.strftime('%Y-%m-%d'),
+            end_date.strftime('%Y-%m-%d')
+        )
+    }
+)
+
+response = bq.execute(request)
+df = pd.concat([data_item.df() for data_item in response], axis=1)
+df
+
+
+
+
+#Error fetching data for ESA Index: The column label 'Date' is not unique.
+#Error fetching data for NQA Index: The column label 'Date' is not unique.
+#Error fetching data for RTYA Index: The column label 'Date' is not unique.
+#Error fetching data for TUA Comdty: The column label 'Date' is not unique.
+
+
