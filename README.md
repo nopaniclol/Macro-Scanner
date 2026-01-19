@@ -2,6 +2,15 @@
 
 A quantitative momentum/trend analysis system that scans 69 financial instruments across macro markets, sectors, stocks, and world ETFs.
 
+## 📌 Two Versions Available
+
+This project has **two implementations**:
+
+1. **Free Version** (this folder): Uses Yahoo Finance - Phase 1 only
+2. **Bloomberg Version** ([bloomberg_version/](bloomberg_version/)): Uses Bloomberg Terminal - Phase 1 + Phase 2
+
+See [VERSIONS_OVERVIEW.md](VERSIONS_OVERVIEW.md) for detailed comparison.
+
 ## Quick Start
 
 ### Command Line (Daily Use)
@@ -28,19 +37,26 @@ jupyter notebook "Macro Scanner.ipynb"
 
 **Score Range**: -10 (Very Bearish) to +10 (Very Bullish)
 
-**Components**:
-- ROC (Rate of Change) - 40% weight
+**Components** (Free Version - Phase 1):
+- ROC (Rate of Change) - 35% weight
   - Multi-timeframe momentum (1d, 2d, 5d, 10d, 20d)
   - Recent periods weighted more heavily
-- MA Trend Signals - 30% weight
+- MA Trend Signals - 25% weight
   - Moving average slopes and crossovers
   - Trend direction and alignment
-- RSI Momentum - 15% weight
+- Volume & Conviction - 20% weight ← **Phase 1**
+  - Volume ratio vs average
+  - Volume trend analysis
+  - Volume-price correlation
+- RSI Momentum - 12% weight
   - Overbought/oversold conditions
   - Normalized from 14-period RSI
-- Price vs MA - 15% weight
+- Price vs MA - 8% weight
   - Position relative to key moving averages
   - Support/resistance analysis
+
+**Note**: Bloomberg version adds **Phase 2 (Options Flow)** - 8% additional weight for stocks/ETFs.
+See [bloomberg_version/README_BLOOMBERG.md](bloomberg_version/README_BLOOMBERG.md)
 
 **Sentiment Classification**:
 - **Very Bullish (L/S)**: Score ≥ 7.0 (Green, Bold)
@@ -76,10 +92,22 @@ Nat Gas               -4.3 Bearish (S)                        -4.1       -4.7   
 
 ## Files
 
-- **run_scanner.py**: Standalone Python script for command-line execution
-- **Macro Scanner.ipynb**: Jupyter notebook with modular components
+### Main Files (Free Version)
+- **[run_scanner.py](run_scanner.py)**: Standalone Python script for command-line execution
+- **[Macro Scanner.ipynb](Macro Scanner.ipynb)**: Jupyter notebook with modular components
+- **[detailed_analysis.py](detailed_analysis.py)**: Script for detailed score component breakdown
 - **score_breakdown.csv**: Detailed component analysis (generated on analysis runs)
-- **detailed_analysis.py**: Script for detailed score component breakdown
+
+### Documentation
+- **[README.md](README.md)**: This file (free version guide)
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)**: Phase 1 implementation details
+- **[enhanced_scoring_proposal.md](enhanced_scoring_proposal.md)**: Original Phase 1+2 proposal
+- **[VERSIONS_OVERVIEW.md](VERSIONS_OVERVIEW.md)**: Comparison of free vs Bloomberg versions
+
+### Bloomberg Version (Separate Folder)
+- **[bloomberg_version/](bloomberg_version/)**: Complete Bloomberg Terminal implementation
+  - Includes Phase 1 (Volume) + Phase 2 (Options Flow)
+  - See [bloomberg_version/INDEX.md](bloomberg_version/INDEX.md) for details
 
 ## Editing Tickers
 
@@ -128,8 +156,25 @@ Also update `TICKER_NAMES` for custom display names.
 
 For issues or questions, refer to the code comments or the detailed inline documentation in the notebook.
 
+## Related Versions
+
+### Bloomberg Terminal Edition
+For institutional-grade data and Phase 2 (Options Flow) analysis:
+- **Location**: [bloomberg_version/](bloomberg_version/)
+- **Features**: Phase 1 + Phase 2 (Options Flow with Put/Call ratio, IV rank)
+- **Requires**: Bloomberg Terminal subscription
+- **Documentation**: [bloomberg_version/INDEX.md](bloomberg_version/INDEX.md)
+
+### Version Comparison
+See [VERSIONS_OVERVIEW.md](VERSIONS_OVERVIEW.md) for:
+- Feature comparison matrix
+- Cost-benefit analysis
+- Migration guide
+- Use case recommendations
+
 ---
 
-**Generated**: 2026-01-18
-**Version**: 1.0
+**Generated**: 2026-01-19
+**Version**: 2.0 (Free Edition with Phase 1)
 **Author**: Carnival Core Score System
+**Bloomberg Edition**: Available in [bloomberg_version/](bloomberg_version/) folder
