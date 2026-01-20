@@ -103,6 +103,11 @@ def is_equity_instrument(ticker):
     return 'Equity' in ticker
 
 
+def is_futures_instrument(ticker):
+    """Check if instrument is futures/commodities"""
+    return 'Comdty' in ticker or 'Index' in ticker
+
+
 def is_volume_instrument(ticker):
     """Check if instrument has volume data (not forex/index)"""
     return 'Curncy' not in ticker or 'BTC' in ticker
@@ -126,24 +131,29 @@ def fetch_historical_data(ticker, days=90):
         request = bql.Request(
             ticker,
             {
-                'Open': bq.data.px_open(),
-                'High': bq.data.px_high(),
-                'Low': bq.data.px_low(),
-                'Close': bq.data.px_last(),
-                'Volume': bq.data.volume(),
+                'Date': bq.data.px_open()['DATE'],
+                'Open': bq.data.px_open()['value'],
+                'High': bq.data.px_high()['value'],
+                'Low': bq.data.px_low()['value'],
+                'Close': bq.data.px_last()['value'],
+                'Volume': bq.data.px_volume()['value'],
             },
             with_params={
-                'dates': bql.func.range(start_date.strftime('%Y-%m-%d'),
-                                       end_date.strftime('%Y-%m-%d'))
+                'fill': 'na',
+                'dates': bq.func.range(
+                    start_date.strftime('%Y-%m-%d'),
+                    end_date.strftime('%Y-%m-%d')
+                )
             }
         )
 
         # Execute request
         response = bq.execute(request)
 
-        # Convert to DataFrame
-        df = response.combine().reset_index()
-        df = df.rename(columns={'DATE': 'Date'})
+        # Convert to DataFrame using correct method
+        df = pd.concat([data_item.df() for data_item in response], axis=1)
+
+        # Sort by date and reset index
         df = df.sort_values('Date').reset_index(drop=True)
 
         return df
@@ -156,33 +166,69 @@ def fetch_historical_data(ticker, days=90):
 def fetch_options_data(ticker):
     """
     Fetch options flow data using BQL (Phase 2)
-    Returns dict with put_call_ratio, iv_percentile, options_volume
+    Returns dict with implied_volatility and put_call_ratio
+    Different calculation for Futures vs Equities
     """
-    if not is_equity_instrument(ticker):
+    # Only fetch for instruments that have options (equities and futures)
+    if not (is_equity_instrument(ticker) or is_futures_instrument(ticker)):
         return None
 
     try:
+        # Determine if this is a futures instrument
+        is_futures = is_futures_instrument(ticker)
+
         # Create BQL request for options metrics
-        request = bql.Request(
-            ticker,
-            {
-                'put_call_ratio': bq.data.put_call_ratio(),
-                'iv_rank': bq.data.historical_volatility_rank(),  # IV percentile
-                'options_volume': bq.data.options_volume(),
-                'stock_volume': bq.data.volume(),
-            }
-        )
+        if is_futures:
+            # Futures use different IV fields
+            request = bql.Request(
+                ticker,
+                {
+                    'Implied_Volatility': bq.data.IMPLIED_VOLATILITY(),
+                    'Fut_Call_IV': bq.data.FUT_CALL_IMPLIED_VOLATILITY(),
+                    'Fut_Put_IV': bq.data.FUT_PUT_IMPLIED_VOLATILITY(),
+                }
+            )
+        else:
+            # Equities use 60-day call/put IV
+            request = bql.Request(
+                ticker,
+                {
+                    'Implied_Volatility': bq.data.IMPLIED_VOLATILITY(),
+                    'Call_IV_60D': bq.data.CALL_IMP_VOL_60D(),
+                    'Put_IV_60D': bq.data.PUT_IMP_VOL_60D(),
+                }
+            )
 
         # Execute request
         response = bq.execute(request)
-        data = response.combine()
+        data = pd.concat([data_item.df() for data_item in response], axis=1)
 
-        # Extract latest values
+        # Extract latest values and calculate put/call ratio
+        if is_futures:
+            fut_call_iv = data['Fut_Call_IV'].iloc[-1] if 'Fut_Call_IV' in data.columns else None
+            fut_put_iv = data['Fut_Put_IV'].iloc[-1] if 'Fut_Put_IV' in data.columns else None
+
+            # Calculate put/call ratio (inverted: put/call)
+            if fut_call_iv and fut_put_iv and fut_call_iv > 0:
+                put_call_ratio = fut_put_iv / fut_call_iv
+            else:
+                put_call_ratio = 1.0
+        else:
+            call_iv_60d = data['Call_IV_60D'].iloc[-1] if 'Call_IV_60D' in data.columns else None
+            put_iv_60d = data['Put_IV_60D'].iloc[-1] if 'Put_IV_60D' in data.columns else None
+
+            # Calculate put/call ratio (inverted: put/call)
+            if call_iv_60d and put_iv_60d and call_iv_60d > 0:
+                put_call_ratio = put_iv_60d / call_iv_60d
+            else:
+                put_call_ratio = 1.0
+
+        # Extract implied volatility
+        implied_vol = data['Implied_Volatility'].iloc[-1] if 'Implied_Volatility' in data.columns else 50
+
         result = {
-            'put_call_ratio': data['put_call_ratio'].iloc[-1] if 'put_call_ratio' in data else 1.0,
-            'iv_rank': data['iv_rank'].iloc[-1] if 'iv_rank' in data else 50,
-            'options_volume': data['options_volume'].iloc[-1] if 'options_volume' in data else 0,
-            'stock_volume': data['stock_volume'].iloc[-1] if 'stock_volume' in data else 1,
+            'put_call_ratio': put_call_ratio,
+            'implied_volatility': implied_vol,
         }
 
         return result
@@ -259,9 +305,9 @@ def calculate_daily_score(df_row, options_data=None):
     - Volume & Conviction: 20%
     - RSI: 12%
 
-    Options Flow (8%) - Stocks/ETFs only:
+    Options Flow (8%) - Stocks/ETFs/Futures with options:
     - Put/Call Ratio: 4%
-    - IV Rank: 4%
+    - Implied Volatility: 4%
     """
 
     # === ROC SIGNALS (35%) ===
@@ -331,16 +377,21 @@ def calculate_daily_score(df_row, options_data=None):
 
         pc_normalized = normalize_to_range(pc_score) * 0.04
 
-        # IV Rank (4%) - contextual to price trend
-        iv_rank = options_data['iv_rank']
+        # Implied Volatility (4%) - contextual to price trend
+        # High IV can signal conviction (uptrend) or panic (downtrend)
+        implied_vol = options_data['implied_volatility']
         price_trend = df_row['ROC_10']  # Use 10-day trend for context
 
+        # Normalize IV to typical range (20-60 for equities, can be higher for commodities)
+        # IV > 40 = high, IV < 20 = low (rough guideline)
+        iv_deviation = (implied_vol - 30) / 10  # Center at 30, normalize
+
         if price_trend > 0:
-            # Uptrend: High IV = conviction
-            iv_score = (iv_rank - 50) / 5
+            # Uptrend: High IV = strong conviction/momentum
+            iv_score = iv_deviation
         else:
-            # Downtrend: High IV = panic
-            iv_score = -(iv_rank - 50) / 5
+            # Downtrend: High IV = panic/capitulation (potential reversal)
+            iv_score = -iv_deviation
 
         iv_normalized = normalize_to_range(iv_score) * 0.04
 

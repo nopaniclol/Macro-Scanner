@@ -49,20 +49,23 @@ except Exception as e:
 # Test 4: Historical Data
 print("Test 4: Fetching 10 days of OHLCV data for AAPL...")
 try:
+    import pandas as pd
     end_date = datetime.now()
     start_date = end_date - timedelta(days=10)
 
     request = bql.Request(
         'AAPL US Equity',
         {
-            'Open': bq.data.px_open(),
-            'High': bq.data.px_high(),
-            'Low': bq.data.px_low(),
-            'Close': bq.data.px_last(),
-            'Volume': bq.data.volume(),
+            'Date': bq.data.px_open()['DATE'],
+            'Open': bq.data.px_open()['value'],
+            'High': bq.data.px_high()['value'],
+            'Low': bq.data.px_low()['value'],
+            'Close': bq.data.px_last()['value'],
+            'Volume': bq.data.px_volume()['value'],
         },
         with_params={
-            'dates': bql.func.range(
+            'fill': 'na',
+            'dates': bq.func.range(
                 start_date.strftime('%Y-%m-%d'),
                 end_date.strftime('%Y-%m-%d')
             )
@@ -70,10 +73,10 @@ try:
     )
 
     response = bq.execute(request)
-    df = response.combine().reset_index()
+    df = pd.concat([data_item.df() for data_item in response], axis=1)
 
     print(f"✓ Fetched {len(df)} days of data")
-    print(f"  Date range: {df['DATE'].min()} to {df['DATE'].max()}")
+    print(f"  Date range: {df['Date'].min()} to {df['Date'].max()}")
     print(f"  Latest close: ${df['Close'].iloc[-1]:.2f}\n")
 except Exception as e:
     print(f"✗ Failed to fetch historical data: {e}\n")
@@ -85,27 +88,29 @@ try:
     request = bql.Request(
         'AAPL US Equity',
         {
-            'put_call_ratio': bq.data.put_call_ratio(),
-            'iv_rank': bq.data.historical_volatility_rank(),
-            'options_volume': bq.data.options_volume(),
+            'Implied_Volatility': bq.data.IMPLIED_VOLATILITY(),
+            'Call_IV_60D': bq.data.CALL_IMP_VOL_60D(),
+            'Put_IV_60D': bq.data.PUT_IMP_VOL_60D(),
         }
     )
 
     response = bq.execute(request)
-    data = response.combine()
+    data = pd.concat([data_item.df() for data_item in response], axis=1)
 
-    pc_ratio = data['put_call_ratio'].iloc[-1] if 'put_call_ratio' in data else None
-    iv_rank = data['iv_rank'].iloc[-1] if 'iv_rank' in data else None
+    implied_vol = data['Implied_Volatility'].iloc[-1] if 'Implied_Volatility' in data.columns else None
+    call_iv = data['Call_IV_60D'].iloc[-1] if 'Call_IV_60D' in data.columns else None
+    put_iv = data['Put_IV_60D'].iloc[-1] if 'Put_IV_60D' in data.columns else None
 
-    if pc_ratio is not None:
-        print(f"✓ Put/Call Ratio: {pc_ratio:.2f}")
+    if implied_vol is not None:
+        print(f"✓ Implied Volatility: {implied_vol:.2f}")
+    else:
+        print("⚠ Implied Volatility: Not available")
+
+    if call_iv is not None and put_iv is not None and call_iv > 0:
+        pc_ratio = put_iv / call_iv
+        print(f"✓ Put/Call Ratio (IV): {pc_ratio:.2f}")
     else:
         print("⚠ Put/Call Ratio: Not available")
-
-    if iv_rank is not None:
-        print(f"✓ IV Rank: {iv_rank:.1f}")
-    else:
-        print("⚠ IV Rank: Not available")
 
     print()
 except Exception as e:
