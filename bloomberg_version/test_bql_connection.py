@@ -106,11 +106,11 @@ try:
     else:
         print("⚠ Implied Volatility: Not available")
 
-    if call_iv is not None and put_iv is not None and call_iv > 0:
-        pc_ratio = put_iv / call_iv
-        print(f"✓ Put/Call Ratio (IV): {pc_ratio:.2f}")
+    if call_iv is not None and put_iv is not None and put_iv > 0:
+        cp_ratio = call_iv / put_iv
+        print(f"✓ Call/Put Ratio (IV): {cp_ratio:.2f}")
     else:
-        print("⚠ Put/Call Ratio: Not available")
+        print("⚠ Call/Put Ratio: Not available")
 
     print()
 except Exception as e:

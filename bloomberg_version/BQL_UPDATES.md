@@ -99,13 +99,13 @@ request = bql.Request(
 response = bq.execute(request)
 data = pd.concat([data_item.df() for data_item in response], axis=1)
 
-# Calculate put/call ratio from IV
+# Calculate call/put ratio from IV
 call_iv = data['Call_IV_60D'].iloc[-1]
 put_iv = data['Put_IV_60D'].iloc[-1]
-put_call_ratio = put_iv / call_iv if call_iv > 0 else 1.0
+call_put_ratio = call_iv / put_iv if put_iv > 0 else 1.0
 
 result = {
-    'put_call_ratio': put_call_ratio,
+    'call_put_ratio': call_put_ratio,
     'implied_volatility': data['Implied_Volatility'].iloc[-1],
 }
 ```
@@ -124,20 +124,22 @@ request = bql.Request(
 response = bq.execute(request)
 data = pd.concat([data_item.df() for data_item in response], axis=1)
 
-# Calculate put/call ratio from futures IV
+# Calculate call/put ratio from futures IV
 fut_call_iv = data['Fut_Call_IV'].iloc[-1]
 fut_put_iv = data['Fut_Put_IV'].iloc[-1]
-put_call_ratio = fut_put_iv / fut_call_iv if fut_call_iv > 0 else 1.0
+call_put_ratio = fut_call_iv / fut_put_iv if fut_put_iv > 0 else 1.0
 
 result = {
-    'put_call_ratio': put_call_ratio,
+    'call_put_ratio': call_put_ratio,
     'implied_volatility': data['Implied_Volatility'].iloc[-1],
 }
 ```
 
 **Key Changes**:
-- Bloomberg does **not** provide pre-calculated `put_call_ratio()`
-- Must calculate manually: `PUT_IV / CALL_IV`
+- Bloomberg does **not** provide pre-calculated `put_call_ratio()` or `call_put_ratio()`
+- Must calculate manually: **`CALL_IV / PUT_IV`** (call/put ratio)
+  - Higher ratio (>1.2) = Bullish (more call buying)
+  - Lower ratio (<0.7) = Bearish (more put buying)
 - Different fields for futures vs equities:
   - Equities: `CALL_IMP_VOL_60D()` / `PUT_IMP_VOL_60D()`
   - Futures: `FUT_CALL_IMPLIED_VOLATILITY()` / `FUT_PUT_IMPLIED_VOLATILITY()`

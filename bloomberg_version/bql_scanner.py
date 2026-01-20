@@ -166,8 +166,12 @@ def fetch_historical_data(ticker, days=90):
 def fetch_options_data(ticker):
     """
     Fetch options flow data using BQL (Phase 2)
-    Returns dict with implied_volatility and put_call_ratio
+    Returns dict with implied_volatility and call_put_ratio
     Different calculation for Futures vs Equities
+
+    Call/Put Ratio = Call IV / Put IV
+    - Higher ratio (>1.2) = Bullish (more call buying)
+    - Lower ratio (<0.7) = Bearish (more put buying)
     """
     # Only fetch for instruments that have options (equities and futures)
     if not (is_equity_instrument(ticker) or is_futures_instrument(ticker)):
@@ -203,31 +207,31 @@ def fetch_options_data(ticker):
         response = bq.execute(request)
         data = pd.concat([data_item.df() for data_item in response], axis=1)
 
-        # Extract latest values and calculate put/call ratio
+        # Extract latest values and calculate call/put ratio
         if is_futures:
             fut_call_iv = data['Fut_Call_IV'].iloc[-1] if 'Fut_Call_IV' in data.columns else None
             fut_put_iv = data['Fut_Put_IV'].iloc[-1] if 'Fut_Put_IV' in data.columns else None
 
-            # Calculate put/call ratio (inverted: put/call)
-            if fut_call_iv and fut_put_iv and fut_call_iv > 0:
-                put_call_ratio = fut_put_iv / fut_call_iv
+            # Calculate call/put ratio: Call IV / Put IV
+            if fut_call_iv and fut_put_iv and fut_put_iv > 0:
+                call_put_ratio = fut_call_iv / fut_put_iv
             else:
-                put_call_ratio = 1.0
+                call_put_ratio = 1.0
         else:
             call_iv_60d = data['Call_IV_60D'].iloc[-1] if 'Call_IV_60D' in data.columns else None
             put_iv_60d = data['Put_IV_60D'].iloc[-1] if 'Put_IV_60D' in data.columns else None
 
-            # Calculate put/call ratio (inverted: put/call)
-            if call_iv_60d and put_iv_60d and call_iv_60d > 0:
-                put_call_ratio = put_iv_60d / call_iv_60d
+            # Calculate call/put ratio: Call IV / Put IV
+            if call_iv_60d and put_iv_60d and put_iv_60d > 0:
+                call_put_ratio = call_iv_60d / put_iv_60d
             else:
-                put_call_ratio = 1.0
+                call_put_ratio = 1.0
 
         # Extract implied volatility
         implied_vol = data['Implied_Volatility'].iloc[-1] if 'Implied_Volatility' in data.columns else 50
 
         result = {
-            'put_call_ratio': put_call_ratio,
+            'call_put_ratio': call_put_ratio,
             'implied_volatility': implied_vol,
         }
 
@@ -306,7 +310,7 @@ def calculate_daily_score(df_row, options_data=None):
     - RSI: 12%
 
     Options Flow (8%) - Stocks/ETFs/Futures with options:
-    - Put/Call Ratio: 4%
+    - Call/Put Ratio: 4%
     - Implied Volatility: 4%
     """
 
@@ -362,20 +366,22 @@ def calculate_daily_score(df_row, options_data=None):
     # === OPTIONS FLOW (8%) - Phase 2 ===
     options_score = 0
     if options_data is not None:
-        # Put/Call Ratio (4%)
-        pc_ratio = options_data['put_call_ratio']
-        if pc_ratio < 0.5:
-            pc_score = 10  # Very bullish (extreme call buying)
-        elif pc_ratio < 0.7:
-            pc_score = 5   # Bullish
-        elif pc_ratio < 1.0:
-            pc_score = 0   # Neutral
-        elif pc_ratio < 1.3:
-            pc_score = -5  # Bearish
+        # Call/Put Ratio (4%) - Call IV / Put IV
+        # Higher ratio = more calls being bought (bullish)
+        # Lower ratio = more puts being bought (bearish)
+        cp_ratio = options_data['call_put_ratio']
+        if cp_ratio > 1.5:
+            cp_score = 10  # Very bullish (extreme call buying)
+        elif cp_ratio > 1.2:
+            cp_score = 5   # Bullish
+        elif cp_ratio > 0.7:
+            cp_score = 0   # Neutral
+        elif cp_ratio > 0.5:
+            cp_score = -5  # Bearish
         else:
-            pc_score = -10 # Very bearish (extreme put buying)
+            cp_score = -10 # Very bearish (extreme put buying)
 
-        pc_normalized = normalize_to_range(pc_score) * 0.04
+        cp_normalized = normalize_to_range(cp_score) * 0.04
 
         # Implied Volatility (4%) - contextual to price trend
         # High IV can signal conviction (uptrend) or panic (downtrend)
@@ -395,7 +401,7 @@ def calculate_daily_score(df_row, options_data=None):
 
         iv_normalized = normalize_to_range(iv_score) * 0.04
 
-        options_score = pc_normalized + iv_normalized
+        options_score = cp_normalized + iv_normalized
 
     # === TOTAL SCORE ===
     total_score = base_score + options_score
@@ -415,7 +421,8 @@ def calculate_scores_for_ticker(ticker):
     df = calculate_indicators(df)
 
     # Fetch options data (if applicable)
-    options_data = fetch_options_data(ticker) if is_equity_instrument(ticker) else None
+    # Function already checks for equity/futures inside, so no need for external check
+    options_data = fetch_options_data(ticker)
 
     # Calculate daily scores
     scores = []
