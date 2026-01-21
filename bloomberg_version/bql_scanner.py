@@ -477,22 +477,17 @@ def format_score(score):
 def print_results(results_by_category):
     """Print formatted results matching reference style"""
 
-    print("\n" + "="*150)
-    print(f"{'CARNIVAL CORE SCORE (CCS) - BLOOMBERG EDITION':^150}")
-    print(f"{'Phase 1 (Volume) + Phase 2 (Options Flow) Enabled':^150}")
-    print("="*150 + "\n")
+    print("\n" + "="*120)
+    print(f"{'CARNIVAL CORE SCORE (CCS) - BLOOMBERG EDITION':^120}")
+    print(f"{'Phase 1 (Volume) + Phase 2 (Options Flow) Enabled':^120}")
+    print("="*120 + "\n")
 
     for category, results in results_by_category.items():
         print(f"\n{'='*20} {category} {'='*20}\n")
 
-        # Header
-        header = (
-            f"{'Ticker':<20} {'Score':>6} {'Sentiment':<25} "
-            f"{'5D Avg':>10} {'D-1':>8} {'D-2':>8} {'D-3':>8} {'D-4':>8} "
-            f"{'10D Avg':>10} {'20D Avg':>10}"
-        )
-        print(header)
-        print("-" * 150)
+        # Header - fixed width alignment
+        print(f"{'Ticker':<15} {'Score':>6} {'Sentiment':<23} {'5D Avg':>7} {'D-1':>7} {'D-2':>7} {'D-3':>7} {'D-4':>7} {'10D Avg':>8} {'20D Avg':>8}")
+        print("-" * 120)
 
         # Sort by current score (descending)
         results_sorted = sorted(results, key=lambda x: x['current_score'] if not pd.isna(x['current_score']) else -999, reverse=True)
@@ -503,17 +498,28 @@ def print_results(results_by_category):
             sentiment, color = classify_sentiment(score)
             reset = '\033[0m'
 
-            # Format scores with colors
-            score_str = format_score(score)
-            sentiment_str = f"{color}{sentiment}{reset}"
+            # Format score with color (right-aligned within 6 chars)
+            if pd.isna(score):
+                score_str = f"{'N/A':>6}"
+            else:
+                score_str = f"{color}{score:>6.1f}{reset}"
 
-            row = (
-                f"{display_name:<20} {score_str} {sentiment_str:<25} "
-                f"{result['avg_5d']:>10.1f} {result['d_minus_1']:>8.1f} "
-                f"{result['d_minus_2']:>8.1f} {result['d_minus_3']:>8.1f} "
-                f"{result['d_minus_4']:>8.1f} {result['avg_10d']:>10.1f} "
-                f"{result['avg_20d']:>10.1f}"
-            )
+            # Sentiment with color but proper padding
+            # Add padding BEFORE color codes to maintain alignment
+            sentiment_padded = f"{sentiment:<23}"
+            sentiment_str = f"{color}{sentiment_padded}{reset}"
+
+            # Format all numeric columns
+            avg_5d = f"{result['avg_5d']:>7.1f}" if not pd.isna(result['avg_5d']) else f"{'nan':>7}"
+            d_1 = f"{result['d_minus_1']:>7.1f}" if not pd.isna(result['d_minus_1']) else f"{'nan':>7}"
+            d_2 = f"{result['d_minus_2']:>7.1f}" if not pd.isna(result['d_minus_2']) else f"{'nan':>7}"
+            d_3 = f"{result['d_minus_3']:>7.1f}" if not pd.isna(result['d_minus_3']) else f"{'nan':>7}"
+            d_4 = f"{result['d_minus_4']:>7.1f}" if not pd.isna(result['d_minus_4']) else f"{'nan':>7}"
+            avg_10d = f"{result['avg_10d']:>8.1f}" if not pd.isna(result['avg_10d']) else f"{'nan':>8}"
+            avg_20d = f"{result['avg_20d']:>8.1f}" if not pd.isna(result['avg_20d']) else f"{'nan':>8}"
+
+            # Build row with consistent spacing
+            row = f"{display_name:<15} {score_str} {sentiment_str} {avg_5d} {d_1} {d_2} {d_3} {d_4} {avg_10d} {avg_20d}"
             print(row)
 
         print()
