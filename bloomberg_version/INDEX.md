@@ -73,9 +73,22 @@ python3 bql_scanner.py
 - Options flow data retrieval (Phase 2)
 - Technical indicator calculation
 - Composite scoring algorithm
+- Macro quadrant analysis (Fidenza Framework)
 - Terminal output formatting
 
 **Run this** to perform daily scans.
+
+---
+
+### 📊 [MACRO_QUADRANT_ANALYSIS.md](MACRO_QUADRANT_ANALYSIS.md)
+**Macro environment analysis documentation**:
+- Fidenza four-quadrant framework explanation
+- Growth and inflation signal methodology
+- Quadrant characteristics and asset performance
+- Transition signals and strategic guidance
+- Example scenarios and interpretation
+
+**Read this** to understand macro regime analysis.
 
 ---
 
@@ -104,6 +117,14 @@ python3 bql_scanner.py
 - **IV Rank** (4%): Implied volatility percentile for conviction
 - **Stocks/ETFs only**: 48 instruments in current configuration
 - **Automatically skipped** for futures, forex, commodities
+
+### ✅ Macro Quadrant Analysis (NEW)
+- **Fidenza Four-Quadrant Framework** integration
+- Automatic regime detection (Goldilocks, Reflation, Stagflation, Risk-Off)
+- Growth signal (equities + cyclical commodities)
+- Inflation signal (bonds + inflation hedges)
+- Strategic positioning recommendations
+- Transition warnings for regime shifts
 
 ---
 
@@ -311,6 +332,15 @@ with open('ccs_results.csv', 'w') as f:
 ---
 
 ## Changelog
+
+### Version 2.1 - Macro Quadrant Analysis (2026-01-21)
+- ✅ Fidenza four-quadrant framework integration
+- ✅ Automatic macro regime detection
+- ✅ Growth signal calculation (equities + commodities)
+- ✅ Inflation signal calculation (bonds + inflation hedges)
+- ✅ Strategic positioning recommendations
+- ✅ Quadrant transition warnings
+- ✅ Comprehensive macro analysis documentation
 
 ### Version 2.0 - Bloomberg Edition (2026-01-19)
 - ✅ Initial Bloomberg Terminal implementation

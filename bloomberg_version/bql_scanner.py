@@ -475,19 +475,19 @@ def format_score(score):
 
 
 def print_results(results_by_category):
-    """Print formatted results matching reference style"""
+    """Print formatted results without color coding for proper alignment"""
 
-    print("\n" + "="*120)
-    print(f"{'CARNIVAL CORE SCORE (CCS) - BLOOMBERG EDITION':^120}")
-    print(f"{'Phase 1 (Volume) + Phase 2 (Options Flow) Enabled':^120}")
-    print("="*120 + "\n")
+    print("\n" + "="*115)
+    print(f"{'CARNIVAL CORE SCORE (CCS) - BLOOMBERG EDITION':^115}")
+    print(f"{'Phase 1 (Volume) + Phase 2 (Options Flow) Enabled':^115}")
+    print("="*115 + "\n")
 
     for category, results in results_by_category.items():
         print(f"\n{'='*20} {category} {'='*20}\n")
 
-        # Header - fixed width alignment
-        print(f"{'Ticker':<15} {'Score':>6} {'Sentiment':<23} {'5D Avg':>7} {'D-1':>7} {'D-2':>7} {'D-3':>7} {'D-4':>7} {'10D Avg':>8} {'20D Avg':>8}")
-        print("-" * 120)
+        # Header - fixed width alignment (removed color, adjusted Sentiment to 20 chars)
+        print(f"{'Ticker':<15} {'Score':>6} {'Sentiment':<20} {'5D Avg':>7} {'D-1':>7} {'D-2':>7} {'D-3':>7} {'D-4':>7} {'10D Avg':>8} {'20D Avg':>8}")
+        print("-" * 115)
 
         # Sort by current score (descending)
         results_sorted = sorted(results, key=lambda x: x['current_score'] if not pd.isna(x['current_score']) else -999, reverse=True)
@@ -495,34 +495,213 @@ def print_results(results_by_category):
         for result in results_sorted:
             display_name = get_display_name(result['ticker'])
             score = result['current_score']
-            sentiment, color = classify_sentiment(score)
-            reset = '\033[0m'
+            sentiment, _ = classify_sentiment(score)
 
-            # Format score with color (right-aligned within 6 chars)
+            # Format score without color
             if pd.isna(score):
                 score_str = f"{'N/A':>6}"
             else:
-                score_str = f"{color}{score:>6.1f}{reset}"
+                score_str = f"{score:>6.1f}"
 
-            # Sentiment with color but proper padding
-            # Add padding BEFORE color codes to maintain alignment
-            sentiment_padded = f"{sentiment:<23}"
-            sentiment_str = f"{color}{sentiment_padded}{reset}"
+            # Sentiment without color, fixed 20 character width
+            sentiment_str = f"{sentiment:<20}"
 
             # Format all numeric columns
-            avg_5d = f"{result['avg_5d']:>7.1f}" if not pd.isna(result['avg_5d']) else f"{'nan':>7}"
-            d_1 = f"{result['d_minus_1']:>7.1f}" if not pd.isna(result['d_minus_1']) else f"{'nan':>7}"
-            d_2 = f"{result['d_minus_2']:>7.1f}" if not pd.isna(result['d_minus_2']) else f"{'nan':>7}"
-            d_3 = f"{result['d_minus_3']:>7.1f}" if not pd.isna(result['d_minus_3']) else f"{'nan':>7}"
-            d_4 = f"{result['d_minus_4']:>7.1f}" if not pd.isna(result['d_minus_4']) else f"{'nan':>7}"
-            avg_10d = f"{result['avg_10d']:>8.1f}" if not pd.isna(result['avg_10d']) else f"{'nan':>8}"
-            avg_20d = f"{result['avg_20d']:>8.1f}" if not pd.isna(result['avg_20d']) else f"{'nan':>8}"
+            avg_5d = f"{result['avg_5d']:>7.1f}" if not pd.isna(result['avg_5d']) else f"{'N/A':>7}"
+            d_1 = f"{result['d_minus_1']:>7.1f}" if not pd.isna(result['d_minus_1']) else f"{'N/A':>7}"
+            d_2 = f"{result['d_minus_2']:>7.1f}" if not pd.isna(result['d_minus_2']) else f"{'N/A':>7}"
+            d_3 = f"{result['d_minus_3']:>7.1f}" if not pd.isna(result['d_minus_3']) else f"{'N/A':>7}"
+            d_4 = f"{result['d_minus_4']:>7.1f}" if not pd.isna(result['d_minus_4']) else f"{'N/A':>7}"
+            avg_10d = f"{result['avg_10d']:>8.1f}" if not pd.isna(result['avg_10d']) else f"{'N/A':>8}"
+            avg_20d = f"{result['avg_20d']:>8.1f}" if not pd.isna(result['avg_20d']) else f"{'N/A':>8}"
 
             # Build row with consistent spacing
             row = f"{display_name:<15} {score_str} {sentiment_str} {avg_5d} {d_1} {d_2} {d_3} {d_4} {avg_10d} {avg_20d}"
             print(row)
 
         print()
+
+
+# ============================================================================
+# MACRO QUADRANT ANALYSIS (FIDENZA FRAMEWORK)
+# ============================================================================
+
+def analyze_macro_quadrant(results_by_category):
+    """
+    Analyzes current macro environment using Fidenza four-quadrant framework.
+
+    Quadrants:
+    - Quad 1 (Goldilocks): Rising growth + Falling inflation
+    - Quad 2 (Reflation): Rising growth + Rising inflation
+    - Quad 3 (Stagflation): Falling growth + Rising inflation
+    - Quad 4 (Risk-Off): Falling growth + Falling inflation
+
+    Returns: Dictionary with quadrant, growth signal, inflation signal, and analysis text
+    """
+
+    # Extract key indicators from results
+    all_results = {}
+    for category, results in results_by_category.items():
+        for result in results:
+            all_results[result['ticker']] = result
+
+    # Helper function to safely get score
+    def get_score(ticker):
+        return all_results.get(ticker, {}).get('current_score', np.nan)
+
+    def get_avg_5d(ticker):
+        return all_results.get(ticker, {}).get('avg_5d', np.nan)
+
+    # === GROWTH SIGNALS ===
+    # Equity indices momentum (S&P, Nasdaq, Russell)
+    equity_scores = []
+    for ticker in ['ESA Index', 'NQA Index', 'RTYA Index']:
+        score = get_score(ticker)
+        if not pd.isna(score):
+            equity_scores.append(score)
+
+    equity_signal = np.mean(equity_scores) if equity_scores else 0
+
+    # Cyclical commodities (Copper, Oil as economic demand proxies)
+    commodity_scores = []
+    for ticker in ['HGA Comdty', 'CLA Comdty']:  # Copper, Oil
+        score = get_score(ticker)
+        if not pd.isna(score):
+            commodity_scores.append(score)
+
+    commodity_signal = np.mean(commodity_scores) if commodity_scores else 0
+
+    # Combined growth signal
+    growth_signal = (equity_signal * 0.7 + commodity_signal * 0.3)
+    growth_rising = growth_signal > 0
+
+    # === INFLATION SIGNALS ===
+    # Treasury yields (inverted - falling bonds = rising yields = rising inflation)
+    bond_scores = []
+    for ticker in ['TUA Comdty', 'FVA Comdty', 'TYA Comdty', 'USA Comdty']:
+        score = get_score(ticker)
+        if not pd.isna(score):
+            bond_scores.append(score)
+
+    bond_signal = -np.mean(bond_scores) if bond_scores else 0  # Inverted
+
+    # Commodities (Gold, Silver, Oil as inflation hedges)
+    inflation_commodity_scores = []
+    for ticker in ['GCA Comdty', 'SIA Comdty', 'CLA Comdty']:  # Gold, Silver, Oil
+        score = get_score(ticker)
+        if not pd.isna(score):
+            inflation_commodity_scores.append(score)
+
+    commodity_inflation_signal = np.mean(inflation_commodity_scores) if inflation_commodity_scores else 0
+
+    # Combined inflation signal
+    inflation_signal = (bond_signal * 0.5 + commodity_inflation_signal * 0.5)
+    inflation_rising = inflation_signal > 0
+
+    # === DETERMINE QUADRANT ===
+    if growth_rising and not inflation_rising:
+        quadrant = "Quad 1: Goldilocks (Disinflation)"
+        quadrant_num = 1
+        description = "Rising growth with falling inflation"
+        outperformers = "Equities, credit, crypto, EM assets"
+        underperformers = "Cyclical commodities"
+        strategy = "Risk-on positioning. Favor growth equities and credit."
+    elif growth_rising and inflation_rising:
+        quadrant = "Quad 2: Reflation"
+        quadrant_num = 2
+        description = "Rising growth and rising inflation"
+        outperformers = "Equities, commodities, risky currencies"
+        underperformers = "Precious metals"
+        strategy = "Strong risk appetite. Watch for central bank tightening signals."
+    elif not growth_rising and inflation_rising:
+        quadrant = "Quad 3: Stagflation"
+        quadrant_num = 3
+        description = "Falling growth with rising inflation"
+        outperformers = "USD, commodities (non-precious metals)"
+        underperformers = "Equities, bonds"
+        strategy = "Defensive positioning. Volatility likely to spike. Reduce equity exposure."
+    else:  # not growth_rising and not inflation_rising
+        quadrant = "Quad 4: Risk-Off (Deflation)"
+        quadrant_num = 4
+        description = "Falling growth and falling inflation"
+        outperformers = "Safe-haven currencies, quality bonds"
+        underperformers = "Commodities, equities"
+        strategy = "Flight to safety. Favor treasuries and defensive assets."
+
+    # === BUILD DETAILED ANALYSIS ===
+    analysis_lines = []
+    analysis_lines.append("\n" + "="*120)
+    analysis_lines.append(f"{'MACRO ENVIRONMENT ANALYSIS - FIDENZA FOUR-QUADRANT FRAMEWORK':^120}")
+    analysis_lines.append("="*120 + "\n")
+
+    analysis_lines.append(f"Current Quadrant: {quadrant}")
+    analysis_lines.append(f"Description: {description}\n")
+
+    analysis_lines.append("Signal Breakdown:")
+    analysis_lines.append(f"  Growth Signal: {growth_signal:+.2f} ({'Rising' if growth_rising else 'Falling'})")
+    analysis_lines.append(f"    - Equity Indices (S&P/Nasdaq/Russell): {equity_signal:+.2f}")
+    analysis_lines.append(f"    - Cyclical Commodities (Copper/Oil): {commodity_signal:+.2f}")
+    analysis_lines.append(f"  Inflation Signal: {inflation_signal:+.2f} ({'Rising' if inflation_rising else 'Falling'})")
+    analysis_lines.append(f"    - Treasury Yields (inverted): {bond_signal:+.2f}")
+    analysis_lines.append(f"    - Inflation Hedges (Gold/Silver/Oil): {commodity_inflation_signal:+.2f}\n")
+
+    # Key instrument scores
+    analysis_lines.append("Key Instrument Scores:")
+    key_instruments = {
+        'ESA Index': 'S&P 500 Futures',
+        'NQA Index': 'Nasdaq 100 Futures',
+        'TYA Comdty': '10Y Treasury',
+        'GCA Comdty': 'Gold',
+        'CLA Comdty': 'Crude Oil',
+        'DXY Index': 'US Dollar Index',
+    }
+
+    for ticker, name in key_instruments.items():
+        score = get_score(ticker)
+        avg_5d = get_avg_5d(ticker)
+        if not pd.isna(score):
+            sentiment, _ = classify_sentiment(score)
+            analysis_lines.append(f"  {name:<20} Score: {score:>6.1f}  (5D Avg: {avg_5d:>6.1f})  {sentiment}")
+        else:
+            analysis_lines.append(f"  {name:<20} Score: {'N/A':>6}  (5D Avg: {'N/A':>6})  N/A")
+
+    analysis_lines.append(f"\nAsset Class Outlook:")
+    analysis_lines.append(f"  Outperformers: {outperformers}")
+    analysis_lines.append(f"  Underperformers: {underperformers}")
+    analysis_lines.append(f"\nRecommended Strategy:")
+    analysis_lines.append(f"  {strategy}")
+
+    # Transition signals
+    analysis_lines.append(f"\nQuadrant Transition Watch:")
+    if quadrant_num == 1:
+        analysis_lines.append(f"  → Quad 2 (Reflation): Watch for stimulative policy and ISM acceleration")
+    elif quadrant_num == 2:
+        analysis_lines.append(f"  → Quad 3 (Stagflation): Monitor Fed tightening signals and yield spikes")
+    elif quadrant_num == 3:
+        analysis_lines.append(f"  → Quad 4 (Risk-Off): Look for economic weakness with persistent inflation")
+    else:
+        analysis_lines.append(f"  → Quad 1 (Goldilocks): Watch for policy accommodation and falling yields")
+
+    analysis_lines.append("\n" + "="*120)
+    analysis_lines.append("Framework Reference: https://www.fidenzamacro.com/p/the-four-quadrant-global-macro-framework")
+    analysis_lines.append("="*120 + "\n")
+
+    # Print analysis
+    for line in analysis_lines:
+        print(line)
+
+    return {
+        'quadrant': quadrant,
+        'quadrant_num': quadrant_num,
+        'growth_signal': growth_signal,
+        'growth_rising': growth_rising,
+        'inflation_signal': inflation_signal,
+        'inflation_rising': inflation_rising,
+        'description': description,
+        'outperformers': outperformers,
+        'underperformers': underperformers,
+        'strategy': strategy,
+    }
 
 
 # ============================================================================
@@ -582,6 +761,9 @@ def run_ccs_scan():
 
     # Print results
     print_results(results_by_category)
+
+    # Macro quadrant analysis
+    analyze_macro_quadrant(results_by_category)
 
     print("\n" + "="*80)
     print(f"Scan complete! Processed {sum(len(r) for r in results_by_category.values())} instruments")
