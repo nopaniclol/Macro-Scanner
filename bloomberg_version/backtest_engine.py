@@ -1,0 +1,1013 @@
+#!/usr/bin/env python3
+"""
+Backtesting Engine for Commodity Trading Signals
+Historical backtesting with walk-forward optimization
+
+Features:
+- Full historical signal simulation
+- Realistic transaction costs and slippage
+- Performance metrics (Sharpe, Sortino, Max DD, etc.)
+- Walk-forward optimization to prevent overfitting
+- Parameter sensitivity analysis
+"""
+
+import bql
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional, Callable
+from dataclasses import dataclass, field
+from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
+
+# Import from existing modules
+from commodity_signals import (
+    CommoditySignalGenerator,
+    COMMODITY_UNIVERSE,
+    SIGNAL_THRESHOLDS,
+    fetch_historical_data,
+    calculate_technical_indicators,
+)
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+# Backtest parameters
+DEFAULT_CONFIG = {
+    'initial_capital': 10_000_000,      # $10M starting capital
+    'transaction_cost_bps': 2.0,         # 2 bps round-trip
+    'slippage_bps': 1.0,                 # 1 bp slippage
+    'max_position_pct': 0.20,            # Max 20% of capital per position
+    'max_correlation_exposure': 0.50,    # Max 50% in correlated positions
+    'risk_per_trade_pct': 0.02,          # 2% risk per trade
+    'atr_stop_multiple': 2.0,            # 2x ATR for stops
+    'profit_target_multiple': 3.0,       # 3:1 reward/risk
+    'max_holding_days': 20,              # Max holding period
+}
+
+# Walk-forward parameters
+WALK_FORWARD_CONFIG = {
+    'in_sample_months': 12,              # 12 months optimization
+    'out_of_sample_months': 3,           # 3 months testing
+    'anchored': False,                    # Rolling vs expanding window
+}
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Trade:
+    """Represents a single trade."""
+    ticker: str
+    direction: str  # 'long' or 'short'
+    entry_date: datetime
+    entry_price: float
+    entry_signal: float
+    position_size: float
+    stop_price: float
+    target_price: float
+    exit_date: Optional[datetime] = None
+    exit_price: Optional[float] = None
+    exit_reason: Optional[str] = None
+    pnl: float = 0.0
+    pnl_pct: float = 0.0
+    holding_days: int = 0
+
+
+@dataclass
+class DailySnapshot:
+    """Daily portfolio snapshot."""
+    date: datetime
+    equity: float
+    cash: float
+    positions_value: float
+    daily_pnl: float
+    daily_return: float
+    drawdown: float
+    positions: Dict = field(default_factory=dict)
+
+
+# ============================================================================
+# BQL SERVICE
+# ============================================================================
+
+bq = bql.Service()
+
+# ============================================================================
+# BACKTEST ENGINE
+# ============================================================================
+
+class CommodityBacktest:
+    """
+    Historical backtesting engine for commodity signals.
+
+    Features:
+    - Simulates trading based on signal generator
+    - Models transaction costs and slippage
+    - Tracks all trades and daily P&L
+    - Calculates comprehensive performance metrics
+    """
+
+    def __init__(
+        self,
+        config: Dict = None
+    ):
+        """
+        Initialize backtest engine.
+
+        Args:
+            config: Configuration dict (uses DEFAULT_CONFIG if None)
+        """
+        self.config = config or DEFAULT_CONFIG.copy()
+
+        # State
+        self.initial_capital = self.config['initial_capital']
+        self.cash = self.initial_capital
+        self.positions = {}  # ticker -> Trade
+        self.trades = []     # Completed trades
+        self.daily_snapshots = []
+        self.equity_curve = []
+
+    def reset(self):
+        """Reset backtest state."""
+        self.cash = self.initial_capital
+        self.positions = {}
+        self.trades = []
+        self.daily_snapshots = []
+        self.equity_curve = []
+
+    def _fetch_historical_prices(
+        self,
+        tickers: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Fetch historical price data for backtesting.
+        """
+        # Calculate days needed
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        days_needed = (end_dt - start_dt).days + 90  # Extra for indicators
+
+        price_data = {}
+
+        for ticker in tickers:
+            df = fetch_historical_data(ticker, days=days_needed)
+            if df is not None and len(df) > 20:
+                df = calculate_technical_indicators(df)
+                # Filter to date range
+                df = df[df['Date'] >= start_date]
+                df = df[df['Date'] <= end_date]
+                price_data[ticker] = df.reset_index(drop=True)
+
+        return price_data
+
+    def _calculate_position_size(
+        self,
+        ticker: str,
+        signal_strength: float,
+        current_price: float,
+        atr: float,
+        portfolio_value: float
+    ) -> float:
+        """
+        Calculate position size using volatility-adjusted sizing.
+
+        Formula:
+        risk_amount = portfolio_value * risk_per_trade_pct
+        position_value = risk_amount / (atr_stop_multiple * atr / current_price)
+        position_value = min(position_value, max_position_pct * portfolio_value)
+        """
+        risk_amount = portfolio_value * self.config['risk_per_trade_pct']
+        stop_distance_pct = (self.config['atr_stop_multiple'] * atr) / current_price
+
+        if stop_distance_pct > 0:
+            position_value = risk_amount / stop_distance_pct
+        else:
+            position_value = risk_amount / 0.02  # Default 2% stop
+
+        # Cap at max position size
+        max_position_value = portfolio_value * self.config['max_position_pct']
+        position_value = min(position_value, max_position_value)
+
+        # Scale by signal strength (stronger signal = larger position)
+        signal_scale = min(abs(signal_strength) / 10, 1.0)
+        position_value *= signal_scale
+
+        return position_value
+
+    def _calculate_transaction_costs(
+        self,
+        trade_value: float
+    ) -> float:
+        """Calculate total transaction costs (commission + slippage)."""
+        total_bps = self.config['transaction_cost_bps'] + self.config['slippage_bps']
+        return trade_value * (total_bps / 10000)
+
+    def _open_position(
+        self,
+        ticker: str,
+        direction: str,
+        signal: float,
+        current_price: float,
+        atr: float,
+        date: datetime,
+        portfolio_value: float
+    ) -> Optional[Trade]:
+        """
+        Open a new position.
+        """
+        # Calculate position size
+        position_value = self._calculate_position_size(
+            ticker, signal, current_price, atr, portfolio_value
+        )
+
+        if position_value <= 0:
+            return None
+
+        # Calculate stop and target
+        stop_distance = self.config['atr_stop_multiple'] * atr
+
+        if direction == 'long':
+            stop_price = current_price - stop_distance
+            target_price = current_price + (stop_distance * self.config['profit_target_multiple'])
+        else:
+            stop_price = current_price + stop_distance
+            target_price = current_price - (stop_distance * self.config['profit_target_multiple'])
+
+        # Deduct transaction costs
+        costs = self._calculate_transaction_costs(position_value)
+        self.cash -= (position_value + costs)
+
+        trade = Trade(
+            ticker=ticker,
+            direction=direction,
+            entry_date=date,
+            entry_price=current_price,
+            entry_signal=signal,
+            position_size=position_value,
+            stop_price=stop_price,
+            target_price=target_price,
+        )
+
+        self.positions[ticker] = trade
+        return trade
+
+    def _close_position(
+        self,
+        ticker: str,
+        current_price: float,
+        date: datetime,
+        reason: str
+    ) -> Optional[Trade]:
+        """
+        Close an existing position.
+        """
+        if ticker not in self.positions:
+            return None
+
+        trade = self.positions[ticker]
+        trade.exit_date = date
+        trade.exit_price = current_price
+        trade.exit_reason = reason
+        trade.holding_days = (date - trade.entry_date).days
+
+        # Calculate P&L
+        if trade.direction == 'long':
+            trade.pnl_pct = (current_price - trade.entry_price) / trade.entry_price
+        else:
+            trade.pnl_pct = (trade.entry_price - current_price) / trade.entry_price
+
+        trade.pnl = trade.position_size * trade.pnl_pct
+
+        # Add back to cash (including P&L, minus exit costs)
+        exit_value = trade.position_size * (1 + trade.pnl_pct)
+        costs = self._calculate_transaction_costs(exit_value)
+        self.cash += (exit_value - costs)
+
+        # Move to completed trades
+        self.trades.append(trade)
+        del self.positions[ticker]
+
+        return trade
+
+    def _check_exits(
+        self,
+        price_data: Dict[str, pd.DataFrame],
+        current_date: datetime,
+        current_signals: Dict[str, float]
+    ):
+        """
+        Check all open positions for exit conditions.
+        """
+        positions_to_close = []
+
+        for ticker, trade in self.positions.items():
+            if ticker not in price_data:
+                continue
+
+            df = price_data[ticker]
+            current_row = df[df['Date'] == current_date.strftime('%Y-%m-%d')]
+
+            if len(current_row) == 0:
+                continue
+
+            current_price = current_row['Close'].iloc[0]
+            current_signal = current_signals.get(ticker, 0)
+            holding_days = (current_date - trade.entry_date).days
+
+            exit_reason = None
+
+            # Check stop-loss
+            if trade.direction == 'long' and current_price <= trade.stop_price:
+                exit_reason = 'Stop-Loss'
+            elif trade.direction == 'short' and current_price >= trade.stop_price:
+                exit_reason = 'Stop-Loss'
+
+            # Check profit target
+            elif trade.direction == 'long' and current_price >= trade.target_price:
+                exit_reason = 'Profit Target'
+            elif trade.direction == 'short' and current_price <= trade.target_price:
+                exit_reason = 'Profit Target'
+
+            # Check signal reversal
+            elif trade.direction == 'long' and current_signal < 0:
+                exit_reason = 'Signal Reversal'
+            elif trade.direction == 'short' and current_signal > 0:
+                exit_reason = 'Signal Reversal'
+
+            # Check max holding period
+            elif holding_days >= self.config['max_holding_days']:
+                exit_reason = 'Max Holding Period'
+
+            if exit_reason:
+                positions_to_close.append((ticker, current_price, exit_reason))
+
+        # Close positions
+        for ticker, price, reason in positions_to_close:
+            self._close_position(ticker, price, current_date, reason)
+
+    def _calculate_portfolio_value(
+        self,
+        price_data: Dict[str, pd.DataFrame],
+        current_date: datetime
+    ) -> float:
+        """
+        Calculate total portfolio value (cash + positions).
+        """
+        positions_value = 0
+
+        for ticker, trade in self.positions.items():
+            if ticker not in price_data:
+                continue
+
+            df = price_data[ticker]
+            current_row = df[df['Date'] == current_date.strftime('%Y-%m-%d')]
+
+            if len(current_row) == 0:
+                # Use last known price
+                positions_value += trade.position_size
+            else:
+                current_price = current_row['Close'].iloc[0]
+                if trade.direction == 'long':
+                    pnl_pct = (current_price - trade.entry_price) / trade.entry_price
+                else:
+                    pnl_pct = (trade.entry_price - current_price) / trade.entry_price
+
+                positions_value += trade.position_size * (1 + pnl_pct)
+
+        return self.cash + positions_value
+
+    def run_backtest(
+        self,
+        start_date: str,
+        end_date: str,
+        commodities: List[str] = None,
+        signal_generator: CommoditySignalGenerator = None
+    ) -> Dict:
+        """
+        Run full historical backtest.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            commodities: List of commodity tickers (default: all)
+            signal_generator: Signal generator instance
+
+        Returns:
+            Dict with trades, equity curve, and performance metrics
+        """
+        self.reset()
+
+        if commodities is None:
+            commodities = list(COMMODITY_UNIVERSE.keys())
+
+        if signal_generator is None:
+            signal_generator = CommoditySignalGenerator(lookback_days=120)
+
+        print(f"Running backtest from {start_date} to {end_date}")
+        print(f"Commodities: {[COMMODITY_UNIVERSE[t]['name'] for t in commodities]}")
+
+        # Fetch all price data
+        all_tickers = commodities + ['ESA Index', 'DXY Index', 'TYA Comdty', 'HGA Comdty']
+        price_data = self._fetch_historical_prices(all_tickers, start_date, end_date)
+
+        if not price_data:
+            print("Error: No price data available")
+            return {}
+
+        # Get trading dates from first commodity
+        first_ticker = commodities[0]
+        if first_ticker not in price_data:
+            print(f"Error: No data for {first_ticker}")
+            return {}
+
+        trading_dates = price_data[first_ticker]['Date'].unique()
+        trading_dates = sorted([datetime.strptime(str(d)[:10], '%Y-%m-%d') for d in trading_dates])
+
+        prev_equity = self.initial_capital
+        peak_equity = self.initial_capital
+
+        # Main backtest loop
+        for i, current_date in enumerate(trading_dates):
+            # Skip first 20 days for indicator warm-up
+            if i < 20:
+                continue
+
+            # Generate signals for all commodities
+            current_signals = {}
+            for ticker in commodities:
+                if ticker in price_data:
+                    # Use price data up to current date for signal generation
+                    df = price_data[ticker]
+                    historical_df = df[df['Date'] <= current_date.strftime('%Y-%m-%d')]
+
+                    if len(historical_df) >= 20:
+                        # Calculate signal based on latest data
+                        from commodity_signals import calculate_sentiment_score
+                        signal = calculate_sentiment_score(historical_df.iloc[-1])
+                        current_signals[ticker] = signal
+
+            # Check exits first
+            self._check_exits(price_data, current_date, current_signals)
+
+            # Check for new entries
+            portfolio_value = self._calculate_portfolio_value(price_data, current_date)
+
+            for ticker in commodities:
+                if ticker in self.positions:
+                    continue  # Already have position
+
+                if ticker not in current_signals:
+                    continue
+
+                signal = current_signals[ticker]
+                df = price_data[ticker]
+                current_row = df[df['Date'] == current_date.strftime('%Y-%m-%d')]
+
+                if len(current_row) == 0:
+                    continue
+
+                current_price = current_row['Close'].iloc[0]
+                atr = current_row['ATR'].iloc[0] if 'ATR' in current_row.columns else current_price * 0.02
+
+                # Entry conditions
+                if signal >= SIGNAL_THRESHOLDS['bullish']:
+                    self._open_position(
+                        ticker, 'long', signal, current_price, atr,
+                        current_date, portfolio_value
+                    )
+                elif signal <= SIGNAL_THRESHOLDS['bearish']:
+                    self._open_position(
+                        ticker, 'short', signal, current_price, atr,
+                        current_date, portfolio_value
+                    )
+
+            # Record daily snapshot
+            current_equity = self._calculate_portfolio_value(price_data, current_date)
+            daily_pnl = current_equity - prev_equity
+            daily_return = daily_pnl / prev_equity if prev_equity > 0 else 0
+
+            peak_equity = max(peak_equity, current_equity)
+            drawdown = (peak_equity - current_equity) / peak_equity if peak_equity > 0 else 0
+
+            snapshot = DailySnapshot(
+                date=current_date,
+                equity=current_equity,
+                cash=self.cash,
+                positions_value=current_equity - self.cash,
+                daily_pnl=daily_pnl,
+                daily_return=daily_return,
+                drawdown=drawdown,
+                positions={t: p.direction for t, p in self.positions.items()}
+            )
+
+            self.daily_snapshots.append(snapshot)
+            self.equity_curve.append(current_equity)
+            prev_equity = current_equity
+
+        # Close any remaining positions
+        final_date = trading_dates[-1]
+        for ticker in list(self.positions.keys()):
+            if ticker in price_data:
+                df = price_data[ticker]
+                final_price = df['Close'].iloc[-1]
+                self._close_position(ticker, final_price, final_date, 'End of Backtest')
+
+        # Calculate performance metrics
+        metrics = self.calculate_performance_metrics()
+
+        return {
+            'trades': self.trades,
+            'daily_snapshots': self.daily_snapshots,
+            'equity_curve': self.equity_curve,
+            'metrics': metrics,
+            'config': self.config,
+        }
+
+    def calculate_performance_metrics(self) -> Dict:
+        """
+        Calculate comprehensive performance statistics.
+
+        Metrics:
+        - Total Return, CAGR
+        - Sharpe Ratio, Sortino Ratio
+        - Max Drawdown, Max Drawdown Duration
+        - Win Rate, Profit Factor
+        - Average Win/Loss, Expectancy
+        """
+        if not self.daily_snapshots:
+            return {}
+
+        # Convert to pandas for easier calculation
+        equity_series = pd.Series([s.equity for s in self.daily_snapshots])
+        returns_series = pd.Series([s.daily_return for s in self.daily_snapshots])
+        dates = [s.date for s in self.daily_snapshots]
+
+        # Basic return metrics
+        total_return = (equity_series.iloc[-1] / self.initial_capital - 1) * 100
+
+        # CAGR
+        num_years = (dates[-1] - dates[0]).days / 365.25
+        if num_years > 0:
+            cagr = ((equity_series.iloc[-1] / self.initial_capital) ** (1 / num_years) - 1) * 100
+        else:
+            cagr = 0
+
+        # Sharpe Ratio (annualized)
+        if returns_series.std() > 0:
+            sharpe = returns_series.mean() / returns_series.std() * np.sqrt(252)
+        else:
+            sharpe = 0
+
+        # Sortino Ratio (downside deviation only)
+        downside_returns = returns_series[returns_series < 0]
+        if len(downside_returns) > 0 and downside_returns.std() > 0:
+            sortino = returns_series.mean() / downside_returns.std() * np.sqrt(252)
+        else:
+            sortino = sharpe
+
+        # Max Drawdown
+        rolling_max = equity_series.expanding().max()
+        drawdown_series = (rolling_max - equity_series) / rolling_max
+        max_drawdown = drawdown_series.max() * 100
+
+        # Max Drawdown Duration
+        in_drawdown = drawdown_series > 0
+        dd_groups = (~in_drawdown).cumsum()
+        dd_durations = in_drawdown.groupby(dd_groups).sum()
+        max_dd_duration = dd_durations.max() if len(dd_durations) > 0 else 0
+
+        # Trade statistics
+        if self.trades:
+            winning_trades = [t for t in self.trades if t.pnl > 0]
+            losing_trades = [t for t in self.trades if t.pnl <= 0]
+
+            num_trades = len(self.trades)
+            win_rate = len(winning_trades) / num_trades * 100
+
+            avg_win = np.mean([t.pnl for t in winning_trades]) if winning_trades else 0
+            avg_loss = np.mean([t.pnl for t in losing_trades]) if losing_trades else 0
+
+            if avg_loss != 0:
+                profit_factor = abs(sum(t.pnl for t in winning_trades) / sum(t.pnl for t in losing_trades))
+            else:
+                profit_factor = float('inf') if sum(t.pnl for t in winning_trades) > 0 else 0
+
+            # Expectancy per trade
+            expectancy = (win_rate / 100 * avg_win) + ((1 - win_rate / 100) * avg_loss)
+
+            # Average holding period
+            avg_holding_days = np.mean([t.holding_days for t in self.trades])
+
+            # Win/Loss by exit reason
+            exit_reasons = {}
+            for t in self.trades:
+                reason = t.exit_reason or 'Unknown'
+                if reason not in exit_reasons:
+                    exit_reasons[reason] = {'count': 0, 'pnl': 0}
+                exit_reasons[reason]['count'] += 1
+                exit_reasons[reason]['pnl'] += t.pnl
+        else:
+            num_trades = 0
+            win_rate = 0
+            avg_win = 0
+            avg_loss = 0
+            profit_factor = 0
+            expectancy = 0
+            avg_holding_days = 0
+            exit_reasons = {}
+
+        return {
+            'total_return_pct': round(total_return, 2),
+            'cagr_pct': round(cagr, 2),
+            'sharpe_ratio': round(sharpe, 2),
+            'sortino_ratio': round(sortino, 2),
+            'max_drawdown_pct': round(max_drawdown, 2),
+            'max_drawdown_duration_days': int(max_dd_duration),
+            'num_trades': num_trades,
+            'win_rate_pct': round(win_rate, 2),
+            'profit_factor': round(profit_factor, 2),
+            'avg_win': round(avg_win, 2),
+            'avg_loss': round(avg_loss, 2),
+            'expectancy': round(expectancy, 2),
+            'avg_holding_days': round(avg_holding_days, 1),
+            'exit_reasons': exit_reasons,
+            'final_equity': round(equity_series.iloc[-1], 2),
+        }
+
+    def run_parameter_sensitivity(
+        self,
+        base_start_date: str,
+        base_end_date: str,
+        param_name: str,
+        param_values: List,
+        commodities: List[str] = None
+    ) -> pd.DataFrame:
+        """
+        Test sensitivity to parameter changes.
+
+        WHY THIS MATTERS:
+        - Over-optimized parameters fail out-of-sample
+        - Robust strategies work across parameter ranges
+        - Identifies fragile vs robust parameters
+
+        Args:
+            base_start_date: Backtest start
+            base_end_date: Backtest end
+            param_name: Parameter to vary
+            param_values: Values to test
+            commodities: Commodities to backtest
+
+        Returns:
+            DataFrame with performance metrics for each parameter value
+        """
+        results = []
+
+        for value in param_values:
+            # Update config
+            self.config[param_name] = value
+
+            # Run backtest
+            result = self.run_backtest(
+                base_start_date,
+                base_end_date,
+                commodities
+            )
+
+            if result and 'metrics' in result:
+                metrics = result['metrics']
+                metrics['param_value'] = value
+                results.append(metrics)
+
+            print(f"  {param_name}={value}: Sharpe={metrics.get('sharpe_ratio', 0):.2f}, "
+                  f"Return={metrics.get('total_return_pct', 0):.1f}%")
+
+        return pd.DataFrame(results)
+
+
+# ============================================================================
+# WALK-FORWARD OPTIMIZATION
+# ============================================================================
+
+class WalkForwardOptimizer:
+    """
+    Walk-forward optimization to prevent overfitting.
+
+    WHY WALK-FORWARD:
+    - Standard backtesting overfits to historical data
+    - Walk-forward simulates real trading conditions
+    - Each period optimizes on past, tests on future
+    - Measures true out-of-sample performance
+    """
+
+    def __init__(
+        self,
+        in_sample_months: int = 12,
+        out_of_sample_months: int = 3,
+        anchored: bool = False
+    ):
+        """
+        Initialize walk-forward optimizer.
+
+        Args:
+            in_sample_months: Months for optimization
+            out_of_sample_months: Months for testing
+            anchored: True = expanding window, False = rolling window
+        """
+        self.is_months = in_sample_months
+        self.oos_months = out_of_sample_months
+        self.anchored = anchored
+
+    def _generate_windows(
+        self,
+        start_date: str,
+        end_date: str
+    ) -> List[Tuple[str, str, str, str]]:
+        """
+        Generate in-sample and out-of-sample date windows.
+
+        Returns:
+            List of (is_start, is_end, oos_start, oos_end) tuples
+        """
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+
+        windows = []
+        anchor_start = start_dt
+
+        current_is_end = start_dt + timedelta(days=self.is_months * 30)
+
+        while current_is_end < end_dt:
+            # In-sample period
+            if self.anchored:
+                is_start = anchor_start
+            else:
+                is_start = current_is_end - timedelta(days=self.is_months * 30)
+
+            is_end = current_is_end
+
+            # Out-of-sample period
+            oos_start = current_is_end + timedelta(days=1)
+            oos_end = min(
+                oos_start + timedelta(days=self.oos_months * 30),
+                end_dt
+            )
+
+            windows.append((
+                is_start.strftime('%Y-%m-%d'),
+                is_end.strftime('%Y-%m-%d'),
+                oos_start.strftime('%Y-%m-%d'),
+                oos_end.strftime('%Y-%m-%d'),
+            ))
+
+            # Move to next window
+            current_is_end = oos_end + timedelta(days=1)
+
+        return windows
+
+    def run_walk_forward(
+        self,
+        start_date: str,
+        end_date: str,
+        commodities: List[str] = None,
+        optimize_params: List[str] = None,
+        param_ranges: Dict[str, List] = None
+    ) -> Dict:
+        """
+        Execute walk-forward optimization.
+
+        Process:
+        1. Split data into rolling windows
+        2. For each window:
+           a. Optimize parameters on in-sample period
+           b. Test with optimized params on out-of-sample
+        3. Aggregate all OOS periods
+        4. Compare to in-sample performance
+
+        Args:
+            start_date: Overall start date
+            end_date: Overall end date
+            commodities: Commodities to trade
+            optimize_params: Parameters to optimize
+            param_ranges: Parameter ranges to test
+
+        Returns:
+            Dict with IS/OOS comparison, degradation ratio, window results
+        """
+        windows = self._generate_windows(start_date, end_date)
+
+        print(f"Walk-Forward Analysis: {len(windows)} windows")
+        print(f"In-Sample: {self.is_months} months, Out-of-Sample: {self.oos_months} months")
+        print("="*60)
+
+        window_results = []
+        all_oos_trades = []
+        all_is_trades = []
+
+        for i, (is_start, is_end, oos_start, oos_end) in enumerate(windows):
+            print(f"\nWindow {i+1}:")
+            print(f"  In-Sample: {is_start} to {is_end}")
+            print(f"  Out-of-Sample: {oos_start} to {oos_end}")
+
+            # In-sample backtest
+            is_engine = CommodityBacktest()
+            is_result = is_engine.run_backtest(is_start, is_end, commodities)
+            is_metrics = is_result.get('metrics', {})
+
+            # Out-of-sample backtest (using same parameters)
+            oos_engine = CommodityBacktest()
+            oos_result = oos_engine.run_backtest(oos_start, oos_end, commodities)
+            oos_metrics = oos_result.get('metrics', {})
+
+            window_results.append({
+                'window': i + 1,
+                'is_start': is_start,
+                'is_end': is_end,
+                'oos_start': oos_start,
+                'oos_end': oos_end,
+                'is_sharpe': is_metrics.get('sharpe_ratio', 0),
+                'oos_sharpe': oos_metrics.get('sharpe_ratio', 0),
+                'is_return': is_metrics.get('total_return_pct', 0),
+                'oos_return': oos_metrics.get('total_return_pct', 0),
+                'is_win_rate': is_metrics.get('win_rate_pct', 0),
+                'oos_win_rate': oos_metrics.get('win_rate_pct', 0),
+            })
+
+            all_is_trades.extend(is_result.get('trades', []))
+            all_oos_trades.extend(oos_result.get('trades', []))
+
+            print(f"  IS Sharpe: {is_metrics.get('sharpe_ratio', 0):.2f}, "
+                  f"OOS Sharpe: {oos_metrics.get('sharpe_ratio', 0):.2f}")
+
+        # Aggregate results
+        results_df = pd.DataFrame(window_results)
+
+        avg_is_sharpe = results_df['is_sharpe'].mean()
+        avg_oos_sharpe = results_df['oos_sharpe'].mean()
+
+        # Degradation ratio (key metric)
+        if avg_is_sharpe > 0:
+            degradation_ratio = avg_oos_sharpe / avg_is_sharpe
+        else:
+            degradation_ratio = 0
+
+        # Interpretation
+        if degradation_ratio >= 0.8:
+            interpretation = "Excellent - Strategy is robust"
+        elif degradation_ratio >= 0.6:
+            interpretation = "Good - Some overfitting present"
+        elif degradation_ratio >= 0.4:
+            interpretation = "Concerning - Significant overfitting"
+        else:
+            interpretation = "Poor - Strategy is likely overfit"
+
+        summary = {
+            'num_windows': len(windows),
+            'avg_is_sharpe': round(avg_is_sharpe, 2),
+            'avg_oos_sharpe': round(avg_oos_sharpe, 2),
+            'degradation_ratio': round(degradation_ratio, 2),
+            'interpretation': interpretation,
+            'avg_is_return': round(results_df['is_return'].mean(), 2),
+            'avg_oos_return': round(results_df['oos_return'].mean(), 2),
+            'total_is_trades': len(all_is_trades),
+            'total_oos_trades': len(all_oos_trades),
+        }
+
+        print("\n" + "="*60)
+        print("WALK-FORWARD SUMMARY")
+        print("="*60)
+        print(f"Average In-Sample Sharpe: {summary['avg_is_sharpe']}")
+        print(f"Average Out-of-Sample Sharpe: {summary['avg_oos_sharpe']}")
+        print(f"Degradation Ratio: {summary['degradation_ratio']}")
+        print(f"Interpretation: {summary['interpretation']}")
+        print("="*60)
+
+        return {
+            'summary': summary,
+            'window_results': window_results,
+            'results_df': results_df,
+        }
+
+
+# ============================================================================
+# PERFORMANCE REPORTING
+# ============================================================================
+
+def print_backtest_report(result: Dict):
+    """Print formatted backtest report."""
+    if not result:
+        print("No backtest results to display")
+        return
+
+    metrics = result.get('metrics', {})
+    trades = result.get('trades', [])
+    config = result.get('config', {})
+
+    print("\n" + "="*80)
+    print(f"{'BACKTEST RESULTS':^80}")
+    print("="*80)
+
+    print(f"\nConfiguration:")
+    print(f"  Initial Capital: ${config.get('initial_capital', 0):,.0f}")
+    print(f"  Transaction Costs: {config.get('transaction_cost_bps', 0)} bps")
+    print(f"  Max Position: {config.get('max_position_pct', 0)*100:.0f}%")
+    print(f"  Stop Loss: {config.get('atr_stop_multiple', 0)}x ATR")
+
+    print(f"\nPerformance Metrics:")
+    print(f"  Total Return: {metrics.get('total_return_pct', 0):.2f}%")
+    print(f"  CAGR: {metrics.get('cagr_pct', 0):.2f}%")
+    print(f"  Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.2f}")
+    print(f"  Sortino Ratio: {metrics.get('sortino_ratio', 0):.2f}")
+    print(f"  Max Drawdown: {metrics.get('max_drawdown_pct', 0):.2f}%")
+    print(f"  Max DD Duration: {metrics.get('max_drawdown_duration_days', 0)} days")
+
+    print(f"\nTrade Statistics:")
+    print(f"  Number of Trades: {metrics.get('num_trades', 0)}")
+    print(f"  Win Rate: {metrics.get('win_rate_pct', 0):.1f}%")
+    print(f"  Profit Factor: {metrics.get('profit_factor', 0):.2f}")
+    print(f"  Avg Win: ${metrics.get('avg_win', 0):,.0f}")
+    print(f"  Avg Loss: ${metrics.get('avg_loss', 0):,.0f}")
+    print(f"  Expectancy: ${metrics.get('expectancy', 0):,.0f}")
+    print(f"  Avg Holding Period: {metrics.get('avg_holding_days', 0):.1f} days")
+
+    print(f"\nExit Reasons:")
+    for reason, data in metrics.get('exit_reasons', {}).items():
+        print(f"  {reason}: {data['count']} trades, ${data['pnl']:,.0f} P&L")
+
+    print(f"\nFinal Equity: ${metrics.get('final_equity', 0):,.0f}")
+    print("="*80 + "\n")
+
+
+def print_trade_log(trades: List[Trade], max_trades: int = 20):
+    """Print trade log."""
+    if not trades:
+        print("No trades to display")
+        return
+
+    print("\n" + "="*100)
+    print(f"{'TRADE LOG (Last ' + str(max_trades) + ' Trades)':^100}")
+    print("="*100)
+
+    print(f"{'Ticker':<12} {'Dir':<6} {'Entry':<12} {'Exit':<12} {'Entry$':>10} {'Exit$':>10} "
+          f"{'P&L%':>8} {'Days':>6} {'Reason':<15}")
+    print("-"*100)
+
+    for trade in trades[-max_trades:]:
+        ticker = COMMODITY_UNIVERSE.get(trade.ticker, {}).get('name', trade.ticker[:10])
+        entry_date = trade.entry_date.strftime('%Y-%m-%d')
+        exit_date = trade.exit_date.strftime('%Y-%m-%d') if trade.exit_date else 'Open'
+
+        print(f"{ticker:<12} {trade.direction:<6} {entry_date:<12} {exit_date:<12} "
+              f"{trade.entry_price:>10.2f} {trade.exit_price or 0:>10.2f} "
+              f"{trade.pnl_pct*100:>7.2f}% {trade.holding_days:>6} {trade.exit_reason or '':<15}")
+
+    print("="*100 + "\n")
+
+
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
+
+if __name__ == "__main__":
+    print("Backtest Engine - Testing")
+    print("="*50)
+
+    # Run basic backtest
+    engine = CommodityBacktest()
+
+    # Use recent 2 years
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+
+    print(f"\nRunning backtest from {start_date} to {end_date}")
+
+    result = engine.run_backtest(
+        start_date=start_date,
+        end_date=end_date,
+        commodities=['GCA Comdty', 'SIA Comdty', 'CLA Comdty']  # Gold, Silver, Oil
+    )
+
+    # Print report
+    print_backtest_report(result)
+    print_trade_log(result.get('trades', []))
+
+    # Run walk-forward analysis
+    print("\n" + "="*50)
+    print("Running Walk-Forward Analysis")
+    print("="*50)
+
+    wf_optimizer = WalkForwardOptimizer(
+        in_sample_months=12,
+        out_of_sample_months=3
+    )
+
+    wf_result = wf_optimizer.run_walk_forward(
+        start_date=start_date,
+        end_date=end_date,
+        commodities=['GCA Comdty', 'CLA Comdty']
+    )

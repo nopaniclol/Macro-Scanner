@@ -60,7 +60,7 @@ TICKERS = {
     ],
 }
 
-# Display names mapping
+# Display names mapping (short ticker symbols)
 TICKER_NAMES = {
     'ESA Index': 'ES', 'NQA Index': 'NQ', 'RTYA Index': 'RTY',
     'TUA Comdty': 'ZT', 'FVA Comdty': 'ZF', 'TYA Comdty': 'ZN', 'USA Comdty': 'ZB',
@@ -69,6 +69,86 @@ TICKER_NAMES = {
     'CLA Comdty': 'Oil', 'NGA Comdty': 'Nat Gas', 'HGA Comdty': 'Copper',
     'PAA Comdty': 'Palladium', 'PLA Comdty': 'Platinum',
     'GCA Comdty': 'Gold', 'SIA Comdty': 'Silver', 'BTC Curncy': 'Bitcoin',
+}
+
+# Full names mapping for all tickers
+TICKER_FULL_NAMES = {
+    # Macro - Index Futures
+    'ESA Index': 'S&P 500 E-mini',
+    'NQA Index': 'Nasdaq 100 E-mini',
+    'RTYA Index': 'Russell 2000 E-mini',
+    # Macro - Treasury Futures
+    'TUA Comdty': '2-Year Treasury',
+    'FVA Comdty': '5-Year Treasury',
+    'TYA Comdty': '10-Year Treasury',
+    'USA Comdty': '30-Year Treasury',
+    # Macro - Currencies
+    'DXY Index': 'US Dollar Index',
+    'USDJPY Curncy': 'US Dollar/Japanese Yen',
+    'EURUSD Curncy': 'Euro/US Dollar',
+    'GBPUSD Curncy': 'British Pound/US Dollar',
+    'AUDUSD Curncy': 'Australian Dollar/US Dollar',
+    'USDCAD Curncy': 'US Dollar/Canadian Dollar',
+    # Macro - Commodities
+    'CLA Comdty': 'WTI Crude Oil',
+    'NGA Comdty': 'Natural Gas',
+    'HGA Comdty': 'Copper',
+    'PAA Comdty': 'Palladium',
+    'PLA Comdty': 'Platinum',
+    'GCA Comdty': 'Gold',
+    'SIA Comdty': 'Silver',
+    'BTC Curncy': 'Bitcoin',
+    # Sectors
+    'XLK US Equity': 'Technology Select Sector',
+    'XLV US Equity': 'Health Care Select Sector',
+    'XLF US Equity': 'Financial Select Sector',
+    'XLY US Equity': 'Consumer Discretionary',
+    'XLC US Equity': 'Communication Services',
+    'XLI US Equity': 'Industrial Select Sector',
+    'XLP US Equity': 'Consumer Staples',
+    'XLE US Equity': 'Energy Select Sector',
+    'XLU US Equity': 'Utilities Select Sector',
+    'XLB US Equity': 'Materials Select Sector',
+    'XLRE US Equity': 'Real Estate Select Sector',
+    'XHB US Equity': 'Homebuilders ETF',
+    'XBI US Equity': 'Biotech ETF',
+    'SMH US Equity': 'Semiconductor ETF',
+    'SPHB US Equity': 'S&P 500 High Beta ETF',
+    'SPLV US Equity': 'S&P 500 Low Volatility ETF',
+    # Top Stocks
+    'AAPL US Equity': 'Apple Inc',
+    'NVDA US Equity': 'NVIDIA Corp',
+    'MSFT US Equity': 'Microsoft Corp',
+    'AMZN US Equity': 'Amazon.com Inc',
+    'META US Equity': 'Meta Platforms Inc',
+    'TSLA US Equity': 'Tesla Inc',
+    'GOOGL US Equity': 'Alphabet Inc Class A',
+    'AVGO US Equity': 'Broadcom Inc',
+    'GOOG US Equity': 'Alphabet Inc Class C',
+    'BRK/B US Equity': 'Berkshire Hathaway Inc',
+    'JPM US Equity': 'JPMorgan Chase & Co',
+    'LLY US Equity': 'Eli Lilly & Co',
+    'V US Equity': 'Visa Inc',
+    'XOM US Equity': 'Exxon Mobil Corp',
+    'UNH US Equity': 'UnitedHealth Group Inc',
+    'MA US Equity': 'Mastercard Inc',
+    'COST US Equity': 'Costco Wholesale Corp',
+    'HD US Equity': 'Home Depot Inc',
+    'WMT US Equity': 'Walmart Inc',
+    'PG US Equity': 'Procter & Gamble Co',
+    'NFLX US Equity': 'Netflix Inc',
+    'JNJ US Equity': 'Johnson & Johnson',
+    'BAC US Equity': 'Bank of America Corp',
+    'ABBV US Equity': 'AbbVie Inc',
+    'CRM US Equity': 'Salesforce Inc',
+    'AMD US Equity': 'Advanced Micro Devices',
+    # World ETFs
+    'VEA US Equity': 'Developed Markets ETF',
+    'IEMG US Equity': 'Emerging Markets ETF',
+    'EEM US Equity': 'MSCI Emerging Markets ETF',
+    'ACWI US Equity': 'All Country World Index ETF',
+    'BNDX US Equity': 'Intl Bond ETF',
+    'VWOB US Equity': 'EM Government Bond ETF',
 }
 
 # ============================================================================
@@ -96,6 +176,14 @@ def get_display_name(ticker):
         return TICKER_NAMES[ticker]
     # Extract symbol from Bloomberg format (e.g., "AAPL US Equity" -> "AAPL")
     return ticker.split()[0]
+
+
+def get_full_name(ticker):
+    """Get full name for ticker"""
+    if ticker in TICKER_FULL_NAMES:
+        return TICKER_FULL_NAMES[ticker]
+    # Fallback to ticker itself if no full name defined
+    return ticker
 
 
 def is_equity_instrument(ticker):
@@ -477,23 +565,27 @@ def format_score(score):
 def print_results(results_by_category):
     """Print formatted results without color coding for proper alignment"""
 
-    print("\n" + "="*115)
-    print(f"{'CARNIVAL CORE SCORE (CCS) - BLOOMBERG EDITION':^115}")
-    print(f"{'Phase 1 (Volume) + Phase 2 (Options Flow) Enabled':^115}")
-    print("="*115 + "\n")
+    print("\n" + "="*140)
+    print(f"{'CARNIVAL CORE SCORE (CCS) - BLOOMBERG EDITION':^140}")
+    print(f"{'Phase 1 (Volume) + Phase 2 (Options Flow) Enabled':^140}")
+    print("="*140 + "\n")
 
     for category, results in results_by_category.items():
         print(f"\n{'='*20} {category} {'='*20}\n")
 
-        # Header - fixed width alignment (removed color, adjusted Sentiment to 20 chars)
-        print(f"{'Ticker':<15} {'Score':>6} {'Sentiment':<20} {'5D Avg':>7} {'D-1':>7} {'D-2':>7} {'D-3':>7} {'D-4':>7} {'10D Avg':>8} {'20D Avg':>8}")
-        print("-" * 115)
+        # Header - fixed width alignment with Name column
+        print(f"{'Ticker':<12} {'Name':<28} {'Score':>6} {'Sentiment':<20} {'5D Avg':>7} {'D-1':>7} {'D-2':>7} {'D-3':>7} {'D-4':>7} {'10D Avg':>8} {'20D Avg':>8}")
+        print("-" * 140)
 
         # Sort by current score (descending)
         results_sorted = sorted(results, key=lambda x: x['current_score'] if not pd.isna(x['current_score']) else -999, reverse=True)
 
         for result in results_sorted:
             display_name = get_display_name(result['ticker'])
+            full_name = get_full_name(result['ticker'])
+            # Truncate full name if too long
+            if len(full_name) > 27:
+                full_name = full_name[:24] + "..."
             score = result['current_score']
             sentiment, _ = classify_sentiment(score)
 
@@ -515,8 +607,8 @@ def print_results(results_by_category):
             avg_10d = f"{result['avg_10d']:>8.1f}" if not pd.isna(result['avg_10d']) else f"{'N/A':>8}"
             avg_20d = f"{result['avg_20d']:>8.1f}" if not pd.isna(result['avg_20d']) else f"{'N/A':>8}"
 
-            # Build row with consistent spacing
-            row = f"{display_name:<15} {score_str} {sentiment_str} {avg_5d} {d_1} {d_2} {d_3} {d_4} {avg_10d} {avg_20d}"
+            # Build row with consistent spacing including full name
+            row = f"{display_name:<12} {full_name:<28} {score_str} {sentiment_str} {avg_5d} {d_1} {d_2} {d_3} {d_4} {avg_10d} {avg_20d}"
             print(row)
 
         print()
@@ -630,9 +722,9 @@ def analyze_macro_quadrant(results_by_category):
 
     # === BUILD DETAILED ANALYSIS ===
     analysis_lines = []
-    analysis_lines.append("\n" + "="*120)
-    analysis_lines.append(f"{'MACRO ENVIRONMENT ANALYSIS - FIDENZA FOUR-QUADRANT FRAMEWORK':^120}")
-    analysis_lines.append("="*120 + "\n")
+    analysis_lines.append("\n" + "="*140)
+    analysis_lines.append(f"{'MACRO ENVIRONMENT ANALYSIS - FIDENZA FOUR-QUADRANT FRAMEWORK':^140}")
+    analysis_lines.append("="*140 + "\n")
 
     analysis_lines.append(f"Current Quadrant: {quadrant}")
     analysis_lines.append(f"Description: {description}\n")
@@ -682,9 +774,9 @@ def analyze_macro_quadrant(results_by_category):
     else:
         analysis_lines.append(f"  → Quad 1 (Goldilocks): Watch for policy accommodation and falling yields")
 
-    analysis_lines.append("\n" + "="*120)
+    analysis_lines.append("\n" + "="*140)
     analysis_lines.append("Framework Reference: https://www.fidenzamacro.com/p/the-four-quadrant-global-macro-framework")
-    analysis_lines.append("="*120 + "\n")
+    analysis_lines.append("="*140 + "\n")
 
     # Print analysis
     for line in analysis_lines:
