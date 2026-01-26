@@ -544,22 +544,14 @@ def detect_divergence_signal(
                 # Calculate implied move
                 implied_commodity_return = -comp_return * abs(expected_corr)
                 divergence = implied_commodity_return - commodity_return
-                divergences.append({
-                    'ticker': comp_ticker,
-                    'divergence': divergence,
-                    'implied_return': implied_commodity_return,
-                })
+                divergences.append({'ticker': comp_ticker, 'divergence': divergence, 'implied_return': implied_commodity_return})
         else:
             # Should move together
             # Divergence = moving opposite directions
             if np.sign(commodity_return) != np.sign(comp_return):
                 implied_commodity_return = comp_return * abs(expected_corr)
                 divergence = implied_commodity_return - commodity_return
-                divergences.append({
-                    'ticker': comp_ticker,
-                    'divergence': divergence,
-                    'implied_return': implied_commodity_return,
-                })
+                divergences.append({'ticker': comp_ticker, 'divergence': divergence, 'implied_return': implied_commodity_return})
 
     if not divergences:
         return {'divergence_type': 'none', 'score': 0, 'magnitude': 0}
@@ -578,12 +570,7 @@ def detect_divergence_signal(
         divergence_type = 'none'
         score = 0
 
-    return {
-        'divergence_type': divergence_type,
-        'score': score,
-        'magnitude': abs(avg_divergence),
-        'details': divergences,
-    }
+    return {'divergence_type': divergence_type, 'score': score, 'magnitude': abs(avg_divergence), 'details': divergences}
 
 
 # ============================================================================
