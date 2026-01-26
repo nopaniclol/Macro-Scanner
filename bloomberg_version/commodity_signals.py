@@ -443,9 +443,7 @@ def calculate_correlation_alignment_score(
         comp_bullish = comp_trend > 0
 
         # Get expected correlation
-        expected_corr = EXPECTED_CORRELATIONS.get(
-            commodity_ticker, {}
-        ).get(comp_ticker, 0)
+        expected_corr = EXPECTED_CORRELATIONS.get(commodity_ticker, {}).get(comp_ticker, 0)
 
         # Calculate alignment
         if expected_corr < 0:
@@ -533,9 +531,7 @@ def detect_divergence_signal(
         comp_return = comp_df['Close'].pct_change(lookback).iloc[-1] * 100
 
         # Get expected correlation
-        expected_corr = EXPECTED_CORRELATIONS.get(
-            commodity_ticker, {}
-        ).get(comp_ticker, 0)
+        expected_corr = EXPECTED_CORRELATIONS.get(commodity_ticker, {}).get(comp_ticker, 0)
 
         if expected_corr == 0:
             continue
