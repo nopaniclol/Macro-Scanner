@@ -18,6 +18,10 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Callable
 from dataclasses import dataclass, field
 from scipy import stats
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.gridspec import GridSpec
+import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -967,6 +971,528 @@ def print_trade_log(trades: List[Trade], max_trades: int = 20):
               f"{trade.pnl_pct*100:>7.2f}% {trade.holding_days:>6} {trade.exit_reason or '':<15}")
 
     print("="*100 + "\n")
+
+
+# ============================================================================
+# VISUALIZATION / CHARTING FUNCTIONS
+# ============================================================================
+
+def plot_equity_curve(
+    result: Dict,
+    figsize: Tuple[int, int] = (14, 10),
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Plot equity curve with drawdown overlay.
+
+    Shows:
+    - Portfolio equity over time
+    - Drawdown periods highlighted
+    - Key metrics annotation
+
+    Args:
+        result: Backtest result dictionary
+        figsize: Figure size
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib Figure object
+    """
+    if not result or 'daily_snapshots' not in result:
+        print("No backtest data to plot")
+        return None
+
+    snapshots = result['daily_snapshots']
+    metrics = result.get('metrics', {})
+
+    dates = [s.date for s in snapshots]
+    equity = [s.equity for s in snapshots]
+    drawdown = [s.drawdown * 100 for s in snapshots]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, height_ratios=[3, 1], sharex=True)
+
+    # Equity Curve
+    ax1.plot(dates, equity, color='navy', linewidth=1.5, label='Portfolio Equity')
+    ax1.axhline(y=result.get('config', {}).get('initial_capital', equity[0]),
+               color='gray', linestyle='--', alpha=0.5, label='Initial Capital')
+
+    # Fill between initial and current
+    ax1.fill_between(dates, result.get('config', {}).get('initial_capital', equity[0]),
+                     equity, where=[e > result.get('config', {}).get('initial_capital', equity[0]) for e in equity],
+                     color='green', alpha=0.2)
+    ax1.fill_between(dates, result.get('config', {}).get('initial_capital', equity[0]),
+                     equity, where=[e <= result.get('config', {}).get('initial_capital', equity[0]) for e in equity],
+                     color='red', alpha=0.2)
+
+    # Formatting
+    ax1.set_ylabel('Portfolio Value ($)', fontsize=11)
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+    ax1.legend(loc='upper left')
+    ax1.grid(True, alpha=0.3)
+
+    # Add metrics annotation
+    metrics_text = (
+        f"Total Return: {metrics.get('total_return_pct', 0):.1f}%\n"
+        f"CAGR: {metrics.get('cagr_pct', 0):.1f}%\n"
+        f"Sharpe: {metrics.get('sharpe_ratio', 0):.2f}\n"
+        f"Max DD: {metrics.get('max_drawdown_pct', 0):.1f}%\n"
+        f"Win Rate: {metrics.get('win_rate_pct', 0):.1f}%"
+    )
+    ax1.text(0.02, 0.98, metrics_text, transform=ax1.transAxes, fontsize=10,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+
+    ax1.set_title('Portfolio Equity Curve', fontsize=14, fontweight='bold')
+
+    # Drawdown Chart
+    ax2.fill_between(dates, 0, drawdown, color='red', alpha=0.5)
+    ax2.plot(dates, drawdown, color='darkred', linewidth=1)
+    ax2.set_ylabel('Drawdown (%)', fontsize=11)
+    ax2.set_xlabel('Date', fontsize=11)
+    ax2.set_ylim(max(drawdown) * 1.1, 0)
+    ax2.grid(True, alpha=0.3)
+    ax2.set_title('Underwater Chart (Drawdown)', fontsize=12)
+
+    # Format x-axis
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Chart saved to: {save_path}")
+
+    return fig
+
+
+def plot_trade_analysis(
+    result: Dict,
+    figsize: Tuple[int, int] = (16, 12),
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Plot comprehensive trade analysis.
+
+    Includes:
+    - P&L distribution histogram
+    - Win/Loss by commodity
+    - Monthly returns heatmap
+    - Trade duration analysis
+
+    Args:
+        result: Backtest result dictionary
+        figsize: Figure size
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib Figure object
+    """
+    if not result or 'trades' not in result:
+        print("No trade data to plot")
+        return None
+
+    trades = result['trades']
+    if not trades:
+        print("No trades executed")
+        return None
+
+    fig = plt.figure(figsize=figsize)
+    gs = GridSpec(2, 3, figure=fig, hspace=0.3, wspace=0.3)
+
+    # 1. P&L Distribution Histogram
+    ax1 = fig.add_subplot(gs[0, 0])
+    pnl_pcts = [t.pnl_pct * 100 for t in trades]
+
+    ax1.hist(pnl_pcts, bins=30, color='steelblue', edgecolor='black', alpha=0.7)
+    ax1.axvline(x=0, color='red', linestyle='--', linewidth=2)
+    ax1.axvline(x=np.mean(pnl_pcts), color='green', linestyle='--', linewidth=2,
+               label=f'Mean: {np.mean(pnl_pcts):.2f}%')
+
+    ax1.set_xlabel('P&L (%)', fontsize=10)
+    ax1.set_ylabel('Frequency', fontsize=10)
+    ax1.set_title('Trade P&L Distribution', fontsize=12, fontweight='bold')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # 2. Win/Loss by Commodity (Stacked Bar)
+    ax2 = fig.add_subplot(gs[0, 1])
+
+    commodity_stats = {}
+    for t in trades:
+        name = COMMODITY_UNIVERSE.get(t.ticker, {}).get('name', t.ticker)
+        if name not in commodity_stats:
+            commodity_stats[name] = {'wins': 0, 'losses': 0, 'pnl': 0}
+        if t.pnl > 0:
+            commodity_stats[name]['wins'] += 1
+        else:
+            commodity_stats[name]['losses'] += 1
+        commodity_stats[name]['pnl'] += t.pnl
+
+    names = list(commodity_stats.keys())
+    wins = [commodity_stats[n]['wins'] for n in names]
+    losses = [commodity_stats[n]['losses'] for n in names]
+
+    x = np.arange(len(names))
+    width = 0.6
+
+    ax2.bar(x, wins, width, label='Wins', color='green', alpha=0.7)
+    ax2.bar(x, [-l for l in losses], width, label='Losses', color='red', alpha=0.7)
+
+    ax2.set_ylabel('Number of Trades', fontsize=10)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(names, rotation=45, ha='right')
+    ax2.axhline(y=0, color='black', linewidth=0.5)
+    ax2.set_title('Wins/Losses by Commodity', fontsize=12, fontweight='bold')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    # 3. P&L by Commodity (Bar)
+    ax3 = fig.add_subplot(gs[0, 2])
+    pnls = [commodity_stats[n]['pnl'] for n in names]
+    colors = ['green' if p > 0 else 'red' for p in pnls]
+
+    ax3.bar(x, pnls, width, color=colors, alpha=0.7)
+    ax3.set_ylabel('Total P&L ($)', fontsize=10)
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(names, rotation=45, ha='right')
+    ax3.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+    ax3.axhline(y=0, color='black', linewidth=0.5)
+    ax3.set_title('Total P&L by Commodity', fontsize=12, fontweight='bold')
+    ax3.grid(True, alpha=0.3, axis='y')
+
+    # 4. Monthly Returns Heatmap
+    ax4 = fig.add_subplot(gs[1, 0:2])
+
+    # Calculate monthly returns from daily snapshots
+    snapshots = result.get('daily_snapshots', [])
+    if snapshots:
+        df_equity = pd.DataFrame({
+            'date': [s.date for s in snapshots],
+            'equity': [s.equity for s in snapshots]
+        })
+        df_equity['date'] = pd.to_datetime(df_equity['date'])
+        df_equity.set_index('date', inplace=True)
+
+        # Monthly returns
+        monthly = df_equity.resample('M').last()
+        monthly['return'] = monthly['equity'].pct_change() * 100
+
+        # Pivot for heatmap
+        monthly['year'] = monthly.index.year
+        monthly['month'] = monthly.index.month
+
+        pivot = monthly.pivot_table(values='return', index='year', columns='month')
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        pivot.columns = [month_names[m-1] for m in pivot.columns]
+
+        sns.heatmap(pivot, annot=True, fmt='.1f', cmap='RdYlGn', center=0,
+                   ax=ax4, cbar_kws={'label': 'Return (%)'}, linewidths=0.5)
+        ax4.set_title('Monthly Returns Heatmap (%)', fontsize=12, fontweight='bold')
+        ax4.set_xlabel('')
+        ax4.set_ylabel('Year', fontsize=10)
+
+    # 5. Trade Duration Distribution
+    ax5 = fig.add_subplot(gs[1, 2])
+    durations = [t.holding_days for t in trades]
+
+    ax5.hist(durations, bins=20, color='purple', edgecolor='black', alpha=0.7)
+    ax5.axvline(x=np.mean(durations), color='orange', linestyle='--', linewidth=2,
+               label=f'Mean: {np.mean(durations):.1f} days')
+
+    ax5.set_xlabel('Holding Period (Days)', fontsize=10)
+    ax5.set_ylabel('Frequency', fontsize=10)
+    ax5.set_title('Trade Duration Distribution', fontsize=12, fontweight='bold')
+    ax5.legend()
+    ax5.grid(True, alpha=0.3)
+
+    plt.suptitle('Trade Analysis Dashboard', fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Chart saved to: {save_path}")
+
+    return fig
+
+
+def plot_walk_forward_results(
+    wf_result: Dict,
+    figsize: Tuple[int, int] = (14, 10),
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Plot walk-forward optimization results.
+
+    Shows:
+    - In-sample vs Out-of-sample Sharpe by window
+    - Degradation ratio visualization
+    - Return comparison
+
+    Args:
+        wf_result: Walk-forward result dictionary
+        figsize: Figure size
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib Figure object
+    """
+    if not wf_result or 'window_results' not in wf_result:
+        print("No walk-forward data to plot")
+        return None
+
+    window_results = wf_result['window_results']
+    summary = wf_result.get('summary', {})
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    # 1. IS vs OOS Sharpe Ratio by Window
+    ax1 = axes[0, 0]
+    windows = [w['window'] for w in window_results]
+    is_sharpe = [w['is_sharpe'] for w in window_results]
+    oos_sharpe = [w['oos_sharpe'] for w in window_results]
+
+    x = np.arange(len(windows))
+    width = 0.35
+
+    ax1.bar(x - width/2, is_sharpe, width, label='In-Sample', color='steelblue', alpha=0.8)
+    ax1.bar(x + width/2, oos_sharpe, width, label='Out-of-Sample', color='coral', alpha=0.8)
+
+    ax1.set_ylabel('Sharpe Ratio', fontsize=10)
+    ax1.set_xlabel('Window', fontsize=10)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels([f'W{w}' for w in windows])
+    ax1.set_title('In-Sample vs Out-of-Sample Sharpe', fontsize=12, fontweight='bold')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3, axis='y')
+    ax1.axhline(y=0, color='black', linewidth=0.5)
+
+    # 2. IS vs OOS Return by Window
+    ax2 = axes[0, 1]
+    is_return = [w['is_return'] for w in window_results]
+    oos_return = [w['oos_return'] for w in window_results]
+
+    ax2.bar(x - width/2, is_return, width, label='In-Sample', color='steelblue', alpha=0.8)
+    ax2.bar(x + width/2, oos_return, width, label='Out-of-Sample', color='coral', alpha=0.8)
+
+    ax2.set_ylabel('Return (%)', fontsize=10)
+    ax2.set_xlabel('Window', fontsize=10)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([f'W{w}' for w in windows])
+    ax2.set_title('In-Sample vs Out-of-Sample Returns', fontsize=12, fontweight='bold')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3, axis='y')
+    ax2.axhline(y=0, color='black', linewidth=0.5)
+
+    # 3. Degradation Ratio Gauge
+    ax3 = axes[1, 0]
+    degradation = summary.get('degradation_ratio', 0)
+
+    # Create gauge visualization
+    theta = np.linspace(0, np.pi, 100)
+    r = 1
+
+    # Background arc
+    for i, (start, end, color) in enumerate([
+        (0, 0.4, 'red'),
+        (0.4, 0.6, 'orange'),
+        (0.6, 0.8, 'yellow'),
+        (0.8, 1.0, 'green')
+    ]):
+        theta_section = np.linspace(np.pi * (1 - end), np.pi * (1 - start), 20)
+        ax3.fill_between(theta_section, 0.7, 1, alpha=0.3, color=color)
+
+    # Needle
+    needle_theta = np.pi * (1 - degradation)
+    ax3.annotate('', xy=(needle_theta, 0.9), xytext=(np.pi/2, 0),
+                arrowprops=dict(arrowstyle='->', color='black', lw=2))
+
+    ax3.set_xlim(0, np.pi)
+    ax3.set_ylim(0, 1.2)
+    ax3.set_aspect('equal')
+    ax3.axis('off')
+
+    # Labels
+    ax3.text(np.pi, 0.6, '0.0', ha='center', fontsize=10)
+    ax3.text(np.pi*0.75, 0.95, '0.4', ha='center', fontsize=10)
+    ax3.text(np.pi*0.5, 1.05, '0.6', ha='center', fontsize=10)
+    ax3.text(np.pi*0.25, 0.95, '0.8', ha='center', fontsize=10)
+    ax3.text(0, 0.6, '1.0', ha='center', fontsize=10)
+
+    ax3.text(np.pi/2, 0.3, f'Degradation Ratio\n{degradation:.2f}',
+            ha='center', fontsize=14, fontweight='bold')
+    ax3.text(np.pi/2, 0.1, summary.get('interpretation', ''),
+            ha='center', fontsize=10, style='italic')
+
+    ax3.set_title('Walk-Forward Robustness', fontsize=12, fontweight='bold', y=1.1)
+
+    # 4. Summary Statistics
+    ax4 = axes[1, 1]
+    ax4.axis('off')
+
+    summary_text = f"""
+    WALK-FORWARD SUMMARY
+    {'='*35}
+
+    Windows Analyzed: {summary.get('num_windows', 0)}
+
+    In-Sample Performance:
+      Avg Sharpe: {summary.get('avg_is_sharpe', 0):.2f}
+      Avg Return: {summary.get('avg_is_return', 0):.1f}%
+
+    Out-of-Sample Performance:
+      Avg Sharpe: {summary.get('avg_oos_sharpe', 0):.2f}
+      Avg Return: {summary.get('avg_oos_return', 0):.1f}%
+
+    Degradation Ratio: {summary.get('degradation_ratio', 0):.2f}
+
+    Interpretation:
+    {summary.get('interpretation', 'N/A')}
+
+    {'='*35}
+
+    Degradation Guide:
+    > 0.8: Excellent (robust)
+    0.6-0.8: Good (minor overfit)
+    0.4-0.6: Concerning (significant overfit)
+    < 0.4: Poor (likely overfit)
+    """
+
+    ax4.text(0.1, 0.95, summary_text, fontsize=10, family='monospace',
+             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.suptitle('Walk-Forward Optimization Analysis', fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Chart saved to: {save_path}")
+
+    return fig
+
+
+def plot_parameter_sensitivity(
+    sensitivity_df: pd.DataFrame,
+    param_name: str,
+    figsize: Tuple[int, int] = (12, 8),
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Plot parameter sensitivity analysis results.
+
+    Shows how performance metrics change with parameter values.
+
+    Args:
+        sensitivity_df: DataFrame from run_parameter_sensitivity
+        param_name: Name of the parameter being tested
+        figsize: Figure size
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib Figure object
+    """
+    if sensitivity_df is None or len(sensitivity_df) == 0:
+        print("No sensitivity data to plot")
+        return None
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    param_values = sensitivity_df['param_value'].values
+
+    # 1. Sharpe Ratio vs Parameter
+    ax1 = axes[0, 0]
+    ax1.plot(param_values, sensitivity_df['sharpe_ratio'], marker='o', color='navy', linewidth=2)
+    ax1.fill_between(param_values, sensitivity_df['sharpe_ratio'], alpha=0.2)
+    ax1.set_xlabel(param_name, fontsize=10)
+    ax1.set_ylabel('Sharpe Ratio', fontsize=10)
+    ax1.set_title('Sharpe Ratio Sensitivity', fontsize=12, fontweight='bold')
+    ax1.grid(True, alpha=0.3)
+
+    # 2. Total Return vs Parameter
+    ax2 = axes[0, 1]
+    ax2.plot(param_values, sensitivity_df['total_return_pct'], marker='s', color='green', linewidth=2)
+    ax2.fill_between(param_values, sensitivity_df['total_return_pct'], alpha=0.2, color='green')
+    ax2.set_xlabel(param_name, fontsize=10)
+    ax2.set_ylabel('Total Return (%)', fontsize=10)
+    ax2.set_title('Return Sensitivity', fontsize=12, fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+
+    # 3. Max Drawdown vs Parameter
+    ax3 = axes[1, 0]
+    ax3.plot(param_values, sensitivity_df['max_drawdown_pct'], marker='^', color='red', linewidth=2)
+    ax3.fill_between(param_values, sensitivity_df['max_drawdown_pct'], alpha=0.2, color='red')
+    ax3.set_xlabel(param_name, fontsize=10)
+    ax3.set_ylabel('Max Drawdown (%)', fontsize=10)
+    ax3.set_title('Drawdown Sensitivity', fontsize=12, fontweight='bold')
+    ax3.grid(True, alpha=0.3)
+    ax3.invert_yaxis()  # Lower drawdown is better
+
+    # 4. Win Rate vs Parameter
+    ax4 = axes[1, 1]
+    ax4.plot(param_values, sensitivity_df['win_rate_pct'], marker='d', color='purple', linewidth=2)
+    ax4.fill_between(param_values, sensitivity_df['win_rate_pct'], alpha=0.2, color='purple')
+    ax4.axhline(y=50, color='gray', linestyle='--', alpha=0.5)
+    ax4.set_xlabel(param_name, fontsize=10)
+    ax4.set_ylabel('Win Rate (%)', fontsize=10)
+    ax4.set_title('Win Rate Sensitivity', fontsize=12, fontweight='bold')
+    ax4.grid(True, alpha=0.3)
+
+    plt.suptitle(f'Parameter Sensitivity Analysis: {param_name}', fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Chart saved to: {save_path}")
+
+    return fig
+
+
+def plot_all_backtest_charts(
+    result: Dict,
+    wf_result: Dict = None,
+    save_dir: str = None
+) -> Dict[str, plt.Figure]:
+    """
+    Generate all backtest analysis charts.
+
+    Convenience function that generates:
+    - Equity curve with drawdown
+    - Trade analysis dashboard
+    - Walk-forward results (if provided)
+
+    Args:
+        result: Backtest result dictionary
+        wf_result: Optional walk-forward result dictionary
+        save_dir: Optional directory to save all charts
+
+    Returns:
+        Dict of figure names to Figure objects
+    """
+    figures = {}
+
+    print("Generating backtest analysis charts...")
+
+    # 1. Equity Curve
+    print("  - Generating equity curve...")
+    save_path = f"{save_dir}/equity_curve.png" if save_dir else None
+    figures['equity_curve'] = plot_equity_curve(result, save_path=save_path)
+
+    # 2. Trade Analysis
+    print("  - Generating trade analysis...")
+    save_path = f"{save_dir}/trade_analysis.png" if save_dir else None
+    figures['trade_analysis'] = plot_trade_analysis(result, save_path=save_path)
+
+    # 3. Walk-Forward Results (if provided)
+    if wf_result:
+        print("  - Generating walk-forward analysis...")
+        save_path = f"{save_dir}/walk_forward.png" if save_dir else None
+        figures['walk_forward'] = plot_walk_forward_results(wf_result, save_path=save_path)
+
+    print(f"Generated {len(figures)} charts")
+
+    return figures
 
 
 # ============================================================================

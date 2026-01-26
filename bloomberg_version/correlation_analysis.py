@@ -16,6 +16,10 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from scipy import stats
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.gridspec import GridSpec
+import seaborn as sns
 
 # ============================================================================
 # CONFIGURATION
@@ -664,6 +668,525 @@ def print_correlation_summary(summary: Dict):
               f"{data['regime']:<12} {data['zscore']:>8.2f} {data['lead_lag']:>10}")
 
     print("="*80)
+
+
+# ============================================================================
+# VISUALIZATION / CHARTING FUNCTIONS
+# ============================================================================
+
+def plot_correlation_heatmap(
+    engine: CorrelationEngine,
+    commodities: List[str] = None,
+    comparison_assets: List[str] = None,
+    window: int = 60,
+    figsize: Tuple[int, int] = (14, 10),
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Plot correlation heatmap between commodities and comparison assets.
+
+    Args:
+        engine: CorrelationEngine instance with loaded data
+        commodities: List of commodity tickers (default: all)
+        comparison_assets: List of comparison asset tickers (default: currencies + bonds)
+        window: Rolling window for correlation calculation
+        figsize: Figure size
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib Figure object
+    """
+    if commodities is None:
+        commodities = list(COMMODITY_UNIVERSE.keys())
+
+    if comparison_assets is None:
+        comparison_assets = list(CURRENCY_UNIVERSE.keys()) + list(BOND_UNIVERSE.keys())
+
+    # Calculate correlation matrix
+    corr_matrix = []
+    commodity_names = []
+    asset_names = []
+
+    for commodity in commodities:
+        row = []
+        commodity_names.append(COMMODITY_UNIVERSE.get(commodity, {}).get('name', commodity))
+        for asset in comparison_assets:
+            corr_data = engine.calculate_rolling_correlations(
+                commodity, [asset], windows=[window]
+            )
+            if f'{window}d' in corr_data and asset in corr_data[f'{window}d']:
+                current_corr = corr_data[f'{window}d'][asset].iloc[-1]
+                row.append(current_corr)
+            else:
+                row.append(0)
+        corr_matrix.append(row)
+
+    # Get asset names
+    for asset in comparison_assets:
+        if asset in CURRENCY_UNIVERSE:
+            asset_names.append(CURRENCY_UNIVERSE[asset]['name'])
+        elif asset in BOND_UNIVERSE:
+            asset_names.append(BOND_UNIVERSE[asset]['name'])
+        else:
+            asset_names.append(asset)
+
+    # Create DataFrame for heatmap
+    corr_df = pd.DataFrame(corr_matrix, index=commodity_names, columns=asset_names)
+
+    # Plot
+    fig, ax = plt.subplots(figsize=figsize)
+
+    sns.heatmap(
+        corr_df,
+        annot=True,
+        fmt='.2f',
+        cmap='RdBu_r',
+        center=0,
+        vmin=-1,
+        vmax=1,
+        square=True,
+        linewidths=0.5,
+        cbar_kws={'label': 'Correlation', 'shrink': 0.8},
+        ax=ax
+    )
+
+    ax.set_title(f'Commodity Correlation Heatmap ({window}-Day Rolling)\n{datetime.now().strftime("%Y-%m-%d")}',
+                 fontsize=14, fontweight='bold')
+    ax.set_xlabel('Comparison Assets', fontsize=11)
+    ax.set_ylabel('Commodities', fontsize=11)
+
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Chart saved to: {save_path}")
+
+    return fig
+
+
+def plot_rolling_correlation_timeseries(
+    engine: CorrelationEngine,
+    commodity_ticker: str,
+    comparison_assets: List[str] = None,
+    windows: List[int] = None,
+    figsize: Tuple[int, int] = (14, 10),
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Plot rolling correlation time series for a commodity against multiple assets.
+
+    Args:
+        engine: CorrelationEngine instance
+        commodity_ticker: Target commodity (e.g., 'GCA Comdty')
+        comparison_assets: Assets to compare against
+        windows: Correlation windows (default: [20, 60])
+        figsize: Figure size
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib Figure object
+    """
+    if comparison_assets is None:
+        comparison_assets = KEY_CORRELATIONS.get(commodity_ticker, ['DXY Index', 'TYA Comdty'])[:4]
+
+    if windows is None:
+        windows = [20, 60]
+
+    commodity_name = COMMODITY_UNIVERSE.get(commodity_ticker, {}).get('name', commodity_ticker)
+
+    # Calculate correlations
+    corr_data = engine.calculate_rolling_correlations(commodity_ticker, comparison_assets, windows)
+
+    # Create figure with subplots
+    n_assets = len(comparison_assets)
+    fig, axes = plt.subplots(n_assets, 1, figsize=figsize, sharex=True)
+
+    if n_assets == 1:
+        axes = [axes]
+
+    colors = plt.cm.tab10(np.linspace(0, 1, len(windows)))
+
+    for idx, asset in enumerate(comparison_assets):
+        ax = axes[idx]
+
+        # Get asset name
+        if asset in CURRENCY_UNIVERSE:
+            asset_name = CURRENCY_UNIVERSE[asset]['name']
+        elif asset in BOND_UNIVERSE:
+            asset_name = BOND_UNIVERSE[asset]['name']
+        elif asset in COMMODITY_UNIVERSE:
+            asset_name = COMMODITY_UNIVERSE[asset]['name']
+        else:
+            asset_name = asset
+
+        # Plot each window
+        for w_idx, window in enumerate(windows):
+            window_key = f'{window}d'
+            if window_key in corr_data and asset in corr_data[window_key]:
+                series = corr_data[window_key][asset]
+                ax.plot(series.index, series.values, label=f'{window}d',
+                       color=colors[w_idx], linewidth=1.5)
+
+        # Add expected correlation line
+        expected = EXPECTED_CORRELATIONS.get(commodity_ticker, {}).get(asset, None)
+        if expected is not None:
+            ax.axhline(y=expected, color='green', linestyle='--', alpha=0.7,
+                      label=f'Expected ({expected:.2f})')
+
+        # Styling
+        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=0.5)
+        ax.fill_between(ax.get_xlim(), -0.3, 0.3, alpha=0.1, color='gray')
+        ax.set_ylabel(f'{asset_name}', fontsize=10)
+        ax.set_ylim(-1, 1)
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    axes[-1].set_xlabel('Date', fontsize=11)
+    axes[0].set_title(f'{commodity_name} Rolling Correlations\n{datetime.now().strftime("%Y-%m-%d")}',
+                      fontsize=14, fontweight='bold')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Chart saved to: {save_path}")
+
+    return fig
+
+
+def plot_commodity_ratios(
+    engine: CorrelationEngine,
+    days: int = 504,
+    figsize: Tuple[int, int] = (14, 12),
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Plot cross-commodity ratios with z-score bands.
+
+    Shows:
+    - Gold/Silver ratio (50-90 historical range)
+    - Gold/Oil ratio
+    - Gold/Platinum ratio
+    - Platinum/Palladium ratio
+
+    Args:
+        engine: CorrelationEngine instance
+        days: Days of historical data
+        figsize: Figure size
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib Figure object
+    """
+    ratios = engine.calculate_cross_commodity_ratios(days=days)
+
+    if not ratios:
+        print("No ratio data available")
+        return None
+
+    # Historical ranges for reference
+    ratio_ranges = {
+        'Gold_Silver': (50, 90, 70),      # (low, high, typical)
+        'Gold_Oil': (12, 30, 18),
+        'Gold_Platinum': (0.8, 2.5, 1.5),
+        'Platinum_Palladium': (0.3, 2.0, 1.0),
+    }
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    axes = axes.flatten()
+
+    ratio_names = list(ratios.keys())
+
+    for idx, ratio_name in enumerate(ratio_names[:4]):
+        ax = axes[idx]
+        df = ratios[ratio_name]
+
+        if len(df) == 0:
+            ax.text(0.5, 0.5, 'No Data', ha='center', va='center')
+            continue
+
+        # Convert Date column if needed
+        if 'Date' in df.columns:
+            dates = pd.to_datetime(df['Date'])
+        else:
+            dates = df.index
+
+        # Plot ratio
+        ax.plot(dates, df['Ratio'], color='navy', linewidth=1.5, label='Ratio')
+
+        # Add moving average
+        if 'Ratio_MA' in df.columns:
+            ax.plot(dates, df['Ratio_MA'], color='orange', linewidth=1,
+                   linestyle='--', label='50-day MA', alpha=0.8)
+
+        # Add historical range bands
+        if ratio_name in ratio_ranges:
+            low, high, typical = ratio_ranges[ratio_name]
+            ax.axhline(y=high, color='red', linestyle=':', alpha=0.7, label=f'High ({high})')
+            ax.axhline(y=low, color='green', linestyle=':', alpha=0.7, label=f'Low ({low})')
+            ax.fill_between(dates, low, high, alpha=0.1, color='gray')
+
+        # Add z-score on secondary axis
+        ax2 = ax.twinx()
+        if 'Ratio_Zscore' in df.columns:
+            ax2.plot(dates, df['Ratio_Zscore'], color='purple', linewidth=1,
+                    alpha=0.5, label='Z-Score')
+            ax2.axhline(y=2, color='red', linestyle='--', alpha=0.3)
+            ax2.axhline(y=-2, color='green', linestyle='--', alpha=0.3)
+            ax2.set_ylabel('Z-Score', fontsize=9, color='purple')
+            ax2.tick_params(axis='y', labelcolor='purple')
+            ax2.set_ylim(-3, 3)
+
+        # Styling
+        display_name = ratio_name.replace('_', '/')
+        current_ratio = df['Ratio'].iloc[-1]
+        current_zscore = df['Ratio_Zscore'].iloc[-1] if 'Ratio_Zscore' in df.columns else 0
+
+        ax.set_title(f'{display_name} Ratio\nCurrent: {current_ratio:.2f} (Z: {current_zscore:+.2f})',
+                    fontsize=11, fontweight='bold')
+        ax.set_xlabel('Date', fontsize=9)
+        ax.set_ylabel('Ratio', fontsize=9)
+        ax.legend(loc='upper left', fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+        # Format x-axis dates
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+    plt.suptitle(f'Cross-Commodity Ratios Analysis\n{datetime.now().strftime("%Y-%m-%d")}',
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Chart saved to: {save_path}")
+
+    return fig
+
+
+def plot_correlation_regime_dashboard(
+    engine: CorrelationEngine,
+    commodity_ticker: str,
+    figsize: Tuple[int, int] = (16, 10),
+    save_path: str = None
+) -> plt.Figure:
+    """
+    Plot comprehensive correlation regime dashboard for a commodity.
+
+    Includes:
+    - Current correlation status vs expected
+    - Correlation regime indicator
+    - Lead-lag relationships
+    - Z-score deviation chart
+
+    Args:
+        engine: CorrelationEngine instance
+        commodity_ticker: Target commodity
+        figsize: Figure size
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib Figure object
+    """
+    commodity_name = COMMODITY_UNIVERSE.get(commodity_ticker, {}).get('name', commodity_ticker)
+    summary = engine.get_correlation_summary(commodity_ticker)
+
+    if not summary or 'correlations' not in summary:
+        print(f"No correlation data for {commodity_ticker}")
+        return None
+
+    fig = plt.figure(figsize=figsize)
+    gs = GridSpec(2, 3, figure=fig, hspace=0.3, wspace=0.3)
+
+    # Extract data
+    corr_data = summary['correlations']
+    assets = list(corr_data.keys())
+    current_corrs = [corr_data[a]['current_corr'] for a in assets]
+    expected_corrs = [corr_data[a]['expected_corr'] for a in assets]
+    zscores = [corr_data[a]['zscore'] for a in assets]
+    regimes = [corr_data[a]['regime'] for a in assets]
+    lead_lags = [corr_data[a]['lead_lag'] for a in assets]
+
+    # Get short asset names
+    asset_names = []
+    for a in assets:
+        if a in CURRENCY_UNIVERSE:
+            asset_names.append(CURRENCY_UNIVERSE[a]['name'])
+        elif a in BOND_UNIVERSE:
+            asset_names.append(BOND_UNIVERSE[a]['name'])
+        elif a in COMMODITY_UNIVERSE:
+            asset_names.append(COMMODITY_UNIVERSE[a]['name'])
+        else:
+            asset_names.append(a.split()[0])
+
+    # 1. Current vs Expected Correlation (Bar Chart)
+    ax1 = fig.add_subplot(gs[0, 0:2])
+    x = np.arange(len(asset_names))
+    width = 0.35
+
+    bars1 = ax1.bar(x - width/2, current_corrs, width, label='Current', color='steelblue')
+    bars2 = ax1.bar(x + width/2, expected_corrs, width, label='Expected', color='lightcoral', alpha=0.7)
+
+    ax1.set_ylabel('Correlation', fontsize=10)
+    ax1.set_title(f'{commodity_name} - Current vs Expected Correlations', fontsize=12, fontweight='bold')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(asset_names, rotation=45, ha='right', fontsize=9)
+    ax1.legend(loc='upper right')
+    ax1.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+    ax1.set_ylim(-1, 1)
+    ax1.grid(True, alpha=0.3, axis='y')
+
+    # 2. Correlation Regime Status (Pie/Donut)
+    ax2 = fig.add_subplot(gs[0, 2])
+    regime_counts = {'normal': 0, 'high': 0, 'low': 0, 'breakdown': 0}
+    for r in regimes:
+        if r in regime_counts:
+            regime_counts[r] += 1
+
+    colors_regime = {'normal': 'green', 'high': 'blue', 'low': 'orange', 'breakdown': 'red'}
+    labels = [k for k, v in regime_counts.items() if v > 0]
+    sizes = [regime_counts[k] for k in labels]
+    colors_pie = [colors_regime[k] for k in labels]
+
+    if sizes:
+        wedges, texts, autotexts = ax2.pie(sizes, labels=labels, colors=colors_pie,
+                                           autopct='%1.0f%%', startangle=90,
+                                           wedgeprops=dict(width=0.5))
+        ax2.set_title('Correlation Regimes', fontsize=12, fontweight='bold')
+
+    # 3. Z-Score Deviation (Horizontal Bar)
+    ax3 = fig.add_subplot(gs[1, 0])
+    colors_zscore = ['red' if abs(z) > 2 else 'orange' if abs(z) > 1 else 'green' for z in zscores]
+
+    y_pos = np.arange(len(asset_names))
+    ax3.barh(y_pos, zscores, color=colors_zscore, alpha=0.7)
+    ax3.set_yticks(y_pos)
+    ax3.set_yticklabels(asset_names, fontsize=9)
+    ax3.axvline(x=0, color='black', linewidth=0.5)
+    ax3.axvline(x=2, color='red', linestyle='--', alpha=0.5)
+    ax3.axvline(x=-2, color='red', linestyle='--', alpha=0.5)
+    ax3.set_xlabel('Z-Score', fontsize=10)
+    ax3.set_title('Correlation Z-Scores\n(vs Historical)', fontsize=11, fontweight='bold')
+    ax3.set_xlim(-3, 3)
+    ax3.grid(True, alpha=0.3, axis='x')
+
+    # 4. Lead-Lag Relationships (Horizontal Bar)
+    ax4 = fig.add_subplot(gs[1, 1])
+    colors_lead = ['blue' if l > 0 else 'purple' if l < 0 else 'gray' for l in lead_lags]
+
+    ax4.barh(y_pos, lead_lags, color=colors_lead, alpha=0.7)
+    ax4.set_yticks(y_pos)
+    ax4.set_yticklabels(asset_names, fontsize=9)
+    ax4.axvline(x=0, color='black', linewidth=0.5)
+    ax4.set_xlabel('Lead-Lag (Days)', fontsize=10)
+    ax4.set_title(f'Lead-Lag vs {commodity_name}\n(+ve = asset leads)', fontsize=11, fontweight='bold')
+    ax4.grid(True, alpha=0.3, axis='x')
+
+    # 5. Summary Table
+    ax5 = fig.add_subplot(gs[1, 2])
+    ax5.axis('off')
+
+    # Create summary text
+    breakdown_count = sum(1 for r in regimes if r == 'breakdown')
+    avg_zscore = np.mean([abs(z) for z in zscores])
+
+    summary_text = f"""
+    CORRELATION SUMMARY
+    {'='*30}
+
+    Commodity: {commodity_name}
+    Date: {summary['timestamp'][:10]}
+
+    Assets Analyzed: {len(assets)}
+    Breakdowns: {breakdown_count}
+    Avg |Z-Score|: {avg_zscore:.2f}
+
+    Status: {'⚠️ CAUTION' if breakdown_count > 0 else '✓ NORMAL'}
+
+    {'='*30}
+    """
+
+    ax5.text(0.1, 0.5, summary_text, fontsize=10, family='monospace',
+             verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.suptitle(f'Correlation Regime Dashboard: {commodity_name}\n{datetime.now().strftime("%Y-%m-%d %H:%M")}',
+                 fontsize=14, fontweight='bold', y=1.02)
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Chart saved to: {save_path}")
+
+    return fig
+
+
+def plot_all_correlation_charts(
+    lookback_days: int = 252,
+    save_dir: str = None
+) -> Dict[str, plt.Figure]:
+    """
+    Generate all correlation analysis charts.
+
+    Convenience function that generates:
+    - Correlation heatmap
+    - Rolling correlations for each commodity
+    - Cross-commodity ratios
+    - Regime dashboards
+
+    Args:
+        lookback_days: Days of historical data
+        save_dir: Optional directory to save all charts
+
+    Returns:
+        Dict of figure names to Figure objects
+    """
+    engine = CorrelationEngine(lookback_days=lookback_days)
+    figures = {}
+
+    print("Generating correlation analysis charts...")
+
+    # 1. Correlation Heatmap
+    print("  - Generating correlation heatmap...")
+    save_path = f"{save_dir}/correlation_heatmap.png" if save_dir else None
+    figures['heatmap'] = plot_correlation_heatmap(engine, save_path=save_path)
+
+    # 2. Commodity Ratios
+    print("  - Generating commodity ratios chart...")
+    save_path = f"{save_dir}/commodity_ratios.png" if save_dir else None
+    figures['ratios'] = plot_commodity_ratios(engine, save_path=save_path)
+
+    # 3. Rolling correlations for each commodity
+    for ticker, info in COMMODITY_UNIVERSE.items():
+        name = info['name']
+        print(f"  - Generating {name} rolling correlations...")
+        save_path = f"{save_dir}/{name.lower()}_correlations.png" if save_dir else None
+        figures[f'{name}_rolling'] = plot_rolling_correlation_timeseries(
+            engine, ticker, save_path=save_path
+        )
+
+    # 4. Regime dashboards for key commodities
+    for ticker in ['GCA Comdty', 'CLA Comdty']:  # Gold and Oil
+        name = COMMODITY_UNIVERSE[ticker]['name']
+        print(f"  - Generating {name} regime dashboard...")
+        save_path = f"{save_dir}/{name.lower()}_regime_dashboard.png" if save_dir else None
+        figures[f'{name}_regime'] = plot_correlation_regime_dashboard(
+            engine, ticker, save_path=save_path
+        )
+
+    print(f"Generated {len(figures)} charts")
+
+    return figures
+
+
+# Key correlations for each commodity (used by visualization)
+KEY_CORRELATIONS = {
+    'GCA Comdty': ['DXY Index', 'TYA Comdty', 'USDJPY Curncy', 'SIA Comdty'],
+    'SIA Comdty': ['GCA Comdty', 'DXY Index', 'HGA Comdty', 'ESA Index'],
+    'PLA Comdty': ['GCA Comdty', 'PAA Comdty', 'ESA Index', 'DXY Index'],
+    'PAA Comdty': ['PLA Comdty', 'ESA Index', 'GCA Comdty', 'DXY Index'],
+    'CLA Comdty': ['USDCAD Curncy', 'DXY Index', 'ESA Index', 'HGA Comdty'],
+}
 
 
 # ============================================================================
