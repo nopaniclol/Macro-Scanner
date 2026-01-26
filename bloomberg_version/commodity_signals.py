@@ -14,7 +14,11 @@ Signal Range: -10 (Very Bearish) to +10 (Very Bullish)
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+except NameError:
+    # __file__ not defined in Jupyter/interactive environments
+    pass
 
 import bql
 import pandas as pd
