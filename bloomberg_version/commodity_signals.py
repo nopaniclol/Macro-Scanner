@@ -104,8 +104,20 @@ def normalize_to_range(values, min_val=-10, max_val=10):
     Normalize values to range using tanh.
     More aggressive scaling (divide by 3) for stronger signals.
     """
+    # Handle NaN values by replacing with 0 (neutral)
+    if pd.isna(values) if np.isscalar(values) else np.any(pd.isna(values)):
+        if np.isscalar(values):
+            values = 0
+        else:
+            values = np.nan_to_num(values, nan=0.0)
     values = np.clip(values, -100, 100)
     return np.tanh(values / 3) * max_val
+
+
+def safe_get(row: pd.Series, key: str, default: float = 0.0) -> float:
+    """Safely get a value from a Series, returning default if missing or NaN."""
+    val = row.get(key, default)
+    return default if pd.isna(val) else val
 
 
 def classify_signal(score: float) -> Tuple[str, str]:
@@ -323,26 +335,29 @@ def calculate_sentiment_score(df_row: pd.Series) -> float:
     """
     # === ROC SIGNALS (35%) ===
     roc_score = (
-        df_row['ROC_1'] * 0.15 +
-        df_row['ROC_2'] * 0.15 +
-        df_row['ROC_5'] * 0.25 +
-        df_row['ROC_10'] * 0.25 +
-        df_row['ROC_20'] * 0.20
+        safe_get(df_row, 'ROC_1') * 0.15 +
+        safe_get(df_row, 'ROC_2') * 0.15 +
+        safe_get(df_row, 'ROC_5') * 0.25 +
+        safe_get(df_row, 'ROC_10') * 0.25 +
+        safe_get(df_row, 'ROC_20') * 0.20
     )
     roc_normalized = normalize_to_range(roc_score) * 0.35
 
     # === MA TREND SIGNALS (25%) ===
     ma_slope_score = (
-        df_row['MA_5_slope'] * 0.3 +
-        df_row['MA_10_slope'] * 0.3 +
-        df_row['MA_20_slope'] * 0.4
+        safe_get(df_row, 'MA_5_slope') * 0.3 +
+        safe_get(df_row, 'MA_10_slope') * 0.3 +
+        safe_get(df_row, 'MA_20_slope') * 0.4
     )
 
     # MA crossover signals
     ma_cross_score = 0
-    if df_row['MA_5'] > df_row['MA_10'] > df_row['MA_20']:
+    ma_5 = safe_get(df_row, 'MA_5')
+    ma_10 = safe_get(df_row, 'MA_10')
+    ma_20 = safe_get(df_row, 'MA_20')
+    if ma_5 > ma_10 > ma_20:
         ma_cross_score = 5  # Bullish alignment
-    elif df_row['MA_5'] < df_row['MA_10'] < df_row['MA_20']:
+    elif ma_5 < ma_10 < ma_20:
         ma_cross_score = -5  # Bearish alignment
 
     ma_normalized = (
@@ -352,13 +367,14 @@ def calculate_sentiment_score(df_row: pd.Series) -> float:
 
     # === VOLUME & CONVICTION (15%) ===
     vol_score = (
-        normalize_to_range((df_row['Vol_Ratio'] - 1) * 100) * 0.40 +
-        normalize_to_range((df_row['Vol_Trend'] - 1) * 100) * 0.30 +
-        normalize_to_range(df_row['Vol_Price_Corr'] * 100) * 0.30
+        normalize_to_range((safe_get(df_row, 'Vol_Ratio', 1.0) - 1) * 100) * 0.40 +
+        normalize_to_range((safe_get(df_row, 'Vol_Trend', 1.0) - 1) * 100) * 0.30 +
+        normalize_to_range(safe_get(df_row, 'Vol_Price_Corr') * 100) * 0.30
     ) * 0.15
 
     # === RSI (10%) ===
-    rsi_normalized = (df_row['RSI'] - 50) / 5
+    rsi_val = safe_get(df_row, 'RSI', 50.0)
+    rsi_normalized = (rsi_val - 50) / 5
     rsi_score = normalize_to_range(rsi_normalized) * 0.10
 
     # === TD SEQUENTIAL (15%) ===
