@@ -12,6 +12,10 @@ Signal Components:
 Signal Range: -10 (Very Bearish) to +10 (Very Bullish)
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import bql
 import pandas as pd
 import numpy as np
