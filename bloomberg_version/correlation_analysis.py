@@ -561,7 +561,7 @@ class CorrelationEngine:
             # Calculate percentile
             merged['Ratio_Percentile'] = merged['Ratio'].rolling(
                 window=252, min_periods=60
-            ).apply(lambda x: stats.percentileofscore(x[:-1], x[-1]) if len(x) > 1 else 50)
+            ).apply(lambda x: stats.percentileofscore(x[:-1], x[-1]) if len(x) > 1 else 50, raw=True)
 
             results[ratio_name] = merged
 
