@@ -26,15 +26,18 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 
-# Import from existing modules
-from correlation_analysis import (
-    CorrelationEngine,
-    COMMODITY_UNIVERSE,
-    CURRENCY_UNIVERSE,
-    BOND_UNIVERSE,
-    EQUITY_UNIVERSE,
-    EXPECTED_CORRELATIONS,
-)
+# Import from existing modules (skip if already loaded via %run)
+try:
+    CorrelationEngine  # Check if already in namespace
+except NameError:
+    from correlation_analysis import (
+        CorrelationEngine,
+        COMMODITY_UNIVERSE,
+        CURRENCY_UNIVERSE,
+        BOND_UNIVERSE,
+        EQUITY_UNIVERSE,
+        EXPECTED_CORRELATIONS,
+    )
 
 # ============================================================================
 # CONFIGURATION
