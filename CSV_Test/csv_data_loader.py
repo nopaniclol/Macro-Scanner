@@ -18,22 +18,72 @@ import os
 # Path to CSV files (relative to this module)
 CSV_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Mapping from Bloomberg tickers to CSV data sources
+# Mapping from Bloomberg tickers to CSV data sources (OHLV files)
 TICKER_TO_OHLV = {
+    # Precious Metals (existing)
     'GCA Comdty': 'OHLV_gold.csv',
     'SIA Comdty': 'OHLV_silver.csv',
     'PLA Comdty': 'OHLV_platinum.csv',
     'PAA Comdty': 'OHLV_palladium.csv',
+    # Energy (existing + expanded)
     'CLA Comdty': 'OHLV_oil.csv',
+    'NGA Comdty': 'OHLV_natgas.csv',        # NEW: Natural Gas
+    'HOA Comdty': 'OHLV_heating_oil.csv',   # NEW: Heating Oil
+    'XBA Comdty': 'OHLV_gasoline.csv',      # NEW: Gasoline
+    # Industrial Metals (NEW)
+    'HGA Comdty': 'OHLV_copper.csv',        # NEW: Copper
+    'LMAHDS03 Comdty': 'OHLV_aluminum.csv', # NEW: Aluminum
+    'LMNIDS03 Comdty': 'OHLV_nickel.csv',   # NEW: Nickel
+    # Agricultural (NEW)
+    'C A Comdty': 'OHLV_corn.csv',          # NEW: Corn
+    'S A Comdty': 'OHLV_soybeans.csv',      # NEW: Soybeans
+    'W A Comdty': 'OHLV_wheat.csv',         # NEW: Wheat
+    'SB A Comdty': 'OHLV_sugar.csv',        # NEW: Sugar
 }
 
-# Columns available in combined_prices.csv
-COMBINED_PRICE_COLUMNS = [
+# Columns available in combined_prices.csv (existing)
+COMBINED_PRICE_COLUMNS_EXISTING = [
     'GCA Comdty', 'SIA Comdty', 'PLA Comdty', 'PAA Comdty', 'CLA Comdty',
     'DXY Index', 'USDJPY Curncy', 'EURUSD Curncy', 'GBPUSD Curncy',
     'AUDUSD Curncy', 'USDCAD Curncy', 'TUA Comdty', 'FVA Comdty',
     'TYA Comdty', 'USA Comdty', 'ESA Index', 'NQA Index', 'RTYA Index'
 ]
+
+# New columns to add to combined_prices.csv for expanded analysis
+COMBINED_PRICE_COLUMNS_NEW = [
+    # Industrial Metals
+    'HGA Comdty',           # Copper
+    'LMAHDS03 Comdty',      # Aluminum
+    'LMNIDS03 Comdty',      # Nickel
+    # Energy
+    'NGA Comdty',           # Natural Gas
+    'HOA Comdty',           # Heating Oil
+    'XBA Comdty',           # Gasoline
+    # Volatility
+    'VIX Index',            # VIX
+    'MOVE Index',           # Bond Volatility
+    # Inflation/Real Yields
+    'USGGBE05 Index',       # 5Y Breakeven
+    'USGGBE10 Index',       # 10Y Breakeven
+    'H15T5YIE Index',       # 5Y TIPS Yield
+    'H15T10YIE Index',      # 10Y TIPS Yield
+    # Credit
+    'LF98OAS Index',        # US HY OAS
+    'LUACOAS Index',        # US IG OAS
+    # Agricultural
+    'C A Comdty',           # Corn
+    'S A Comdty',           # Soybeans
+    'W A Comdty',           # Wheat
+    'SB A Comdty',          # Sugar
+    # EM Assets
+    'EEM US Equity',        # EM ETF
+    'USDZAR Curncy',        # USD/ZAR
+    'USDBRL Curncy',        # USD/BRL
+    'USDMXN Curncy',        # USD/MXN
+]
+
+# Full list of all columns (existing + new)
+COMBINED_PRICE_COLUMNS = COMBINED_PRICE_COLUMNS_EXISTING + COMBINED_PRICE_COLUMNS_NEW
 
 # Tickers that have corrupted data in early rows (need filtering)
 CORRUPTED_TICKERS = ['PAA Comdty', 'CLA Comdty', 'USDJPY Curncy']
@@ -197,7 +247,7 @@ def fetch_price_data(ticker: str, days: int = 252) -> Optional[pd.DataFrame]:
     })
 
     # Forward fill missing values (mimics BQL 'fill': 'prev')
-    df['Close'] = df['Close'].fillna(method='ffill')
+    df['Close'] = df['Close'].ffill()
     df = df.dropna(subset=['Close'])
 
     # Filter to date range
@@ -238,7 +288,7 @@ def fetch_multi_asset_data(tickers: List[str], days: int = 252) -> pd.DataFrame:
     returns_data = {}
     for ticker in tickers:
         if ticker in combined.columns:
-            prices = combined[ticker].fillna(method='ffill')
+            prices = combined[ticker].ffill()
             returns = prices.pct_change()
             returns_data[ticker] = returns
 
@@ -311,17 +361,87 @@ def validate_data() -> Dict[str, any]:
 
 
 # =============================================================================
-# UNIVERSE DEFINITIONS (matching bloomberg_version)
+# UNIVERSE DEFINITIONS (EXPANDED - 40 assets)
 # =============================================================================
 
-COMMODITY_UNIVERSE = {
+# -----------------------------------------------------------------------------
+# TIER 1: PRECIOUS METALS (existing)
+# -----------------------------------------------------------------------------
+PRECIOUS_METALS_UNIVERSE = {
     'GCA Comdty': {'name': 'Gold', 'type': 'precious_metal'},
     'SIA Comdty': {'name': 'Silver', 'type': 'precious_metal'},
     'PLA Comdty': {'name': 'Platinum', 'type': 'precious_metal'},
     'PAA Comdty': {'name': 'Palladium', 'type': 'precious_metal'},
-    'CLA Comdty': {'name': 'Oil', 'type': 'energy'},
 }
 
+# -----------------------------------------------------------------------------
+# TIER 1: INDUSTRIAL METALS (NEW - Growth Proxies)
+# -----------------------------------------------------------------------------
+INDUSTRIAL_METALS_UNIVERSE = {
+    'HGA Comdty': {'name': 'Copper', 'type': 'industrial_metal', 'growth_proxy': True},
+    'LMAHDS03 Comdty': {'name': 'Aluminum', 'type': 'industrial_metal'},
+    'LMNIDS03 Comdty': {'name': 'Nickel', 'type': 'industrial_metal'},
+}
+
+# -----------------------------------------------------------------------------
+# TIER 1: ENERGY (EXPANDED)
+# -----------------------------------------------------------------------------
+ENERGY_UNIVERSE = {
+    'CLA Comdty': {'name': 'Crude Oil', 'type': 'energy'},
+    'NGA Comdty': {'name': 'Natural Gas', 'type': 'energy'},
+    'HOA Comdty': {'name': 'Heating Oil', 'type': 'energy'},
+    'XBA Comdty': {'name': 'Gasoline', 'type': 'energy'},
+}
+
+# -----------------------------------------------------------------------------
+# TIER 1: VOLATILITY & RISK INDICATORS (NEW)
+# -----------------------------------------------------------------------------
+VOLATILITY_UNIVERSE = {
+    'VIX Index': {'name': 'VIX', 'type': 'equity_vol', 'regime_indicator': True},
+    'MOVE Index': {'name': 'Bond Volatility', 'type': 'bond_vol'},
+}
+
+# -----------------------------------------------------------------------------
+# TIER 1: REAL YIELDS & INFLATION EXPECTATIONS (NEW)
+# -----------------------------------------------------------------------------
+INFLATION_UNIVERSE = {
+    'USGGBE05 Index': {'name': '5Y Breakeven', 'type': 'breakeven'},
+    'USGGBE10 Index': {'name': '10Y Breakeven', 'type': 'breakeven'},
+    'H15T5YIE Index': {'name': '5Y TIPS Yield', 'type': 'real_yield'},
+    'H15T10YIE Index': {'name': '10Y TIPS Yield', 'type': 'real_yield'},
+}
+
+# -----------------------------------------------------------------------------
+# TIER 2: CREDIT SPREADS (NEW - Risk Appetite)
+# -----------------------------------------------------------------------------
+CREDIT_UNIVERSE = {
+    'LF98OAS Index': {'name': 'US HY OAS', 'type': 'credit_spread'},
+    'LUACOAS Index': {'name': 'US IG OAS', 'type': 'credit_spread'},
+}
+
+# -----------------------------------------------------------------------------
+# TIER 2: AGRICULTURAL (NEW - Inflation Hedging)
+# -----------------------------------------------------------------------------
+AGRICULTURAL_UNIVERSE = {
+    'C A Comdty': {'name': 'Corn', 'type': 'grain'},
+    'S A Comdty': {'name': 'Soybeans', 'type': 'oilseed'},
+    'W A Comdty': {'name': 'Wheat', 'type': 'grain'},
+    'SB A Comdty': {'name': 'Sugar', 'type': 'soft'},
+}
+
+# -----------------------------------------------------------------------------
+# TIER 2: EM EXPOSURE (NEW)
+# -----------------------------------------------------------------------------
+EM_UNIVERSE = {
+    'EEM US Equity': {'name': 'EM ETF', 'type': 'equity'},
+    'USDZAR Curncy': {'name': 'USD/ZAR', 'type': 'commodity_fx'},  # Gold producer
+    'USDBRL Curncy': {'name': 'USD/BRL', 'type': 'commodity_fx'},  # Commodity exporter
+    'USDMXN Curncy': {'name': 'USD/MXN', 'type': 'commodity_fx'},
+}
+
+# -----------------------------------------------------------------------------
+# CURRENCIES (existing)
+# -----------------------------------------------------------------------------
 CURRENCY_UNIVERSE = {
     'DXY Index': {'name': 'Dollar Index', 'expected_corr': 'inverse'},
     'USDJPY Curncy': {'name': 'USD/JPY', 'expected_corr': 'risk_proxy'},
@@ -331,6 +451,9 @@ CURRENCY_UNIVERSE = {
     'USDCAD Curncy': {'name': 'USD/CAD', 'expected_corr': 'oil_inverse'},
 }
 
+# -----------------------------------------------------------------------------
+# BONDS (existing)
+# -----------------------------------------------------------------------------
 BOND_UNIVERSE = {
     'TUA Comdty': {'name': '2Y Treasury', 'duration': 2},
     'FVA Comdty': {'name': '5Y Treasury', 'duration': 5},
@@ -338,10 +461,73 @@ BOND_UNIVERSE = {
     'USA Comdty': {'name': '30Y Treasury', 'duration': 30},
 }
 
+# -----------------------------------------------------------------------------
+# EQUITIES (existing)
+# -----------------------------------------------------------------------------
 EQUITY_UNIVERSE = {
     'ESA Index': {'name': 'S&P 500 Futures'},
     'NQA Index': {'name': 'Nasdaq 100 Futures'},
     'RTYA Index': {'name': 'Russell 2000 Futures'},
+}
+
+# -----------------------------------------------------------------------------
+# COMBINED UNIVERSES
+# -----------------------------------------------------------------------------
+# Legacy alias for backward compatibility
+COMMODITY_UNIVERSE = {
+    **PRECIOUS_METALS_UNIVERSE,
+    'CLA Comdty': ENERGY_UNIVERSE['CLA Comdty'],
+}
+
+# Full commodity universe including all raw materials
+FULL_COMMODITY_UNIVERSE = {
+    **PRECIOUS_METALS_UNIVERSE,
+    **INDUSTRIAL_METALS_UNIVERSE,
+    **ENERGY_UNIVERSE,
+    **AGRICULTURAL_UNIVERSE,
+}
+
+# Complete macro universe (all 40 assets)
+FULL_MACRO_UNIVERSE = {
+    **PRECIOUS_METALS_UNIVERSE,
+    **INDUSTRIAL_METALS_UNIVERSE,
+    **ENERGY_UNIVERSE,
+    **VOLATILITY_UNIVERSE,
+    **INFLATION_UNIVERSE,
+    **CREDIT_UNIVERSE,
+    **AGRICULTURAL_UNIVERSE,
+    **EM_UNIVERSE,
+    **CURRENCY_UNIVERSE,
+    **BOND_UNIVERSE,
+    **EQUITY_UNIVERSE,
+}
+
+# -----------------------------------------------------------------------------
+# CROSS-ASSET SPREAD DEFINITIONS
+# -----------------------------------------------------------------------------
+SPREAD_DEFINITIONS = {
+    '2s10s_slope': {
+        'long': 'TYA Comdty',   # 10Y
+        'short': 'TUA Comdty',  # 2Y
+        'normal_range': (0, 200),  # bps
+        'inversion_threshold': 0,
+    },
+    'gold_silver_ratio': {
+        'numerator': 'GCA Comdty',
+        'denominator': 'SIA Comdty',
+        'historical_mean': 70,
+        'historical_range': (50, 90),
+    },
+    'gold_copper_ratio': {
+        'numerator': 'GCA Comdty',
+        'denominator': 'HGA Comdty',
+        'use': 'risk_sentiment',  # High = risk-off
+    },
+    'oil_natgas_ratio': {
+        'numerator': 'CLA Comdty',
+        'denominator': 'NGA Comdty',
+        'use': 'energy_substitution',
+    },
 }
 
 

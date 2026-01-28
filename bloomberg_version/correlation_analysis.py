@@ -59,40 +59,250 @@ EQUITY_UNIVERSE = {
     'RTYA Index': {'name': 'Russell 2000 Futures'},
 }
 
+# =============================================================================
+# EXPANDED UNIVERSE DEFINITIONS (40 Assets Total)
+# =============================================================================
+
+# Precious Metals (existing - alias)
+PRECIOUS_METALS_UNIVERSE = {
+    'GCA Comdty': {'name': 'Gold', 'type': 'precious_metal'},
+    'SIA Comdty': {'name': 'Silver', 'type': 'precious_metal'},
+    'PLA Comdty': {'name': 'Platinum', 'type': 'precious_metal'},
+    'PAA Comdty': {'name': 'Palladium', 'type': 'precious_metal'},
+}
+
+# Industrial Metals (NEW - Growth Proxies)
+INDUSTRIAL_METALS_UNIVERSE = {
+    'HGA Comdty': {'name': 'Copper', 'type': 'industrial_metal', 'growth_proxy': True},
+    'LMAHDS03 Comdty': {'name': 'Aluminum', 'type': 'industrial_metal'},
+    'LMNIDS03 Comdty': {'name': 'Nickel', 'type': 'industrial_metal'},
+}
+
+# Energy (EXPANDED)
+ENERGY_UNIVERSE = {
+    'CLA Comdty': {'name': 'Crude Oil', 'type': 'energy'},
+    'NGA Comdty': {'name': 'Natural Gas', 'type': 'energy'},
+    'HOA Comdty': {'name': 'Heating Oil', 'type': 'energy'},
+    'XBA Comdty': {'name': 'Gasoline', 'type': 'energy'},
+}
+
+# Volatility & Risk Indicators (NEW)
+VOLATILITY_UNIVERSE = {
+    'VIX Index': {'name': 'VIX', 'type': 'equity_vol', 'regime_indicator': True},
+    'MOVE Index': {'name': 'Bond Volatility', 'type': 'bond_vol'},
+}
+
+# Real Yields & Inflation Expectations (NEW)
+INFLATION_UNIVERSE = {
+    'USGGBE05 Index': {'name': '5Y Breakeven', 'type': 'breakeven'},
+    'USGGBE10 Index': {'name': '10Y Breakeven', 'type': 'breakeven'},
+    'H15T5YIE Index': {'name': '5Y TIPS Yield', 'type': 'real_yield'},
+    'H15T10YIE Index': {'name': '10Y TIPS Yield', 'type': 'real_yield'},
+}
+
+# Credit Spreads (NEW - Risk Appetite)
+CREDIT_UNIVERSE = {
+    'LF98OAS Index': {'name': 'US HY OAS', 'type': 'credit_spread'},
+    'LUACOAS Index': {'name': 'US IG OAS', 'type': 'credit_spread'},
+}
+
+# Agricultural (NEW - Inflation Hedging)
+AGRICULTURAL_UNIVERSE = {
+    'C A Comdty': {'name': 'Corn', 'type': 'grain'},
+    'S A Comdty': {'name': 'Soybeans', 'type': 'oilseed'},
+    'W A Comdty': {'name': 'Wheat', 'type': 'grain'},
+    'SB A Comdty': {'name': 'Sugar', 'type': 'soft'},
+}
+
+# EM Exposure (NEW)
+EM_UNIVERSE = {
+    'EEM US Equity': {'name': 'EM ETF', 'type': 'equity'},
+    'USDZAR Curncy': {'name': 'USD/ZAR', 'type': 'commodity_fx'},
+    'USDBRL Curncy': {'name': 'USD/BRL', 'type': 'commodity_fx'},
+    'USDMXN Curncy': {'name': 'USD/MXN', 'type': 'commodity_fx'},
+}
+
+# Full Macro Universe (all 40 assets)
+FULL_MACRO_UNIVERSE = {
+    **PRECIOUS_METALS_UNIVERSE,
+    **INDUSTRIAL_METALS_UNIVERSE,
+    **ENERGY_UNIVERSE,
+    **VOLATILITY_UNIVERSE,
+    **INFLATION_UNIVERSE,
+    **CREDIT_UNIVERSE,
+    **AGRICULTURAL_UNIVERSE,
+    **EM_UNIVERSE,
+    **CURRENCY_UNIVERSE,
+    **BOND_UNIVERSE,
+    **EQUITY_UNIVERSE,
+}
+
 # Default correlation windows
 CORRELATION_WINDOWS = [20, 60, 120]  # Short, medium, long-term
 
-# Expected correlation relationships (for alignment scoring)
+# =============================================================================
+# EXPECTED CORRELATIONS - EXPANDED (40 Assets)
+# =============================================================================
+
 EXPECTED_CORRELATIONS = {
-    'GCA Comdty': {  # Gold
+    # =========================================================================
+    # GOLD - Safe haven, inverse to real yields
+    # =========================================================================
+    'GCA Comdty': {
+        # Currencies
         'DXY Index': -0.5,        # Inverse - alternative store of value
-        'TYA Comdty': -0.3,       # Inverse to real yields
         'USDJPY Curncy': -0.3,    # Risk-off = gold up, USDJPY down
-        'SIA Comdty': 0.85,       # Highly correlated precious metals
+        'EURUSD Curncy': 0.4,     # EUR strength = gold strength
+        'AUDUSD Curncy': 0.3,     # Both commodity-sensitive
+        # Bonds
+        'TYA Comdty': -0.3,       # Inverse to nominal yields
+        'TUA Comdty': -0.2,       # Weaker inverse to short end
+        # Equities
         'ESA Index': -0.2,        # Mild inverse - safe haven
+        'NQA Index': -0.25,       # Slightly more inverse
+        # Other commodities
+        'SIA Comdty': 0.85,       # Highly correlated precious metals
+        'PLA Comdty': 0.6,        # PGM correlation
+        'PAA Comdty': 0.4,        # Weaker PGM correlation
+        'CLA Comdty': 0.1,        # Weak - both dollar-denominated
+        # NEW - Critical additions
+        'VIX Index': 0.4,         # Risk-off = gold up, VIX up
+        'HGA Comdty': 0.3,        # Mild positive (both commodities)
+        'H15T10YIE Index': -0.7,  # CRITICAL: Inverse to real yields
+        'H15T5YIE Index': -0.65,  # Inverse to real yields
+        'USGGBE10 Index': 0.3,    # Positive with inflation expectations
+        'USGGBE05 Index': 0.3,    # Positive with inflation expectations
+        'LF98OAS Index': 0.3,     # Credit stress = gold up
+        'LUACOAS Index': 0.2,     # IG spread widening = gold up
+        'EEM US Equity': -0.2,    # Inverse to EM risk
+        'USDZAR Curncy': 0.3,     # ZAR weakness = gold strength
     },
-    'SIA Comdty': {  # Silver
+
+    # =========================================================================
+    # SILVER - Hybrid precious/industrial
+    # =========================================================================
+    'SIA Comdty': {
         'GCA Comdty': 0.85,       # Follows gold
         'DXY Index': -0.4,        # Inverse to dollar
+        'ESA Index': 0.1,         # Slightly pro-cyclical
+        'TYA Comdty': -0.2,       # Mild inverse to yields
         'HGA Comdty': 0.5,        # Industrial demand linkage
-        'ESA Index': 0.1,         # Slightly pro-cyclical (industrial)
+        'VIX Index': 0.2,         # Mild positive (safe haven lite)
+        'H15T10YIE Index': -0.5,  # Inverse to real yields
+        'NGA Comdty': 0.1,        # Weak energy correlation
     },
-    'PLA Comdty': {  # Platinum
+
+    # =========================================================================
+    # PLATINUM - Industrial precious metal
+    # =========================================================================
+    'PLA Comdty': {
         'GCA Comdty': 0.6,        # Follows gold but more industrial
+        'SIA Comdty': 0.7,        # Precious metal correlation
         'PAA Comdty': 0.7,        # PGM correlation
         'ESA Index': 0.3,         # Pro-cyclical (auto catalysts)
+        'DXY Index': -0.35,       # Inverse to dollar
+        'HGA Comdty': 0.4,        # Industrial correlation
+        'VIX Index': -0.1,        # Mild inverse (cyclical)
+        'EEM US Equity': 0.3,     # EM demand (China autos)
     },
-    'PAA Comdty': {  # Palladium
+
+    # =========================================================================
+    # PALLADIUM - Most cyclical precious metal
+    # =========================================================================
+    'PAA Comdty': {
         'PLA Comdty': 0.7,        # PGM correlation
         'ESA Index': 0.4,         # Most pro-cyclical precious metal
         'GCA Comdty': 0.4,        # Weaker gold correlation
+        'DXY Index': -0.3,        # Inverse to dollar
+        'HGA Comdty': 0.45,       # Industrial correlation
+        'VIX Index': -0.2,        # Inverse (cyclical asset)
+        'EEM US Equity': 0.35,    # EM demand
     },
-    'CLA Comdty': {  # Oil
+
+    # =========================================================================
+    # OIL - Growth sensitive, dollar denominated
+    # =========================================================================
+    'CLA Comdty': {
         'USDCAD Curncy': -0.5,    # Canada is major exporter
-        'HGA Comdty': 0.5,        # Both growth-sensitive
         'DXY Index': -0.4,        # Dollar-denominated
         'ESA Index': 0.3,         # Growth proxy
-        'NGA Comdty': 0.3,        # Energy complex correlation
+        'AUDUSD Curncy': 0.4,     # Commodity currency
+        'HGA Comdty': 0.5,        # Both growth-sensitive
+        'NGA Comdty': 0.3,        # Energy complex (weak)
+        'VIX Index': -0.3,        # Risk-off = oil down
+        'EEM US Equity': 0.4,     # EM demand proxy
+        'USDBRL Curncy': -0.4,    # Brazil oil exporter
+        'H15T10YIE Index': 0.2,   # Mild positive with real rates
+        'LF98OAS Index': -0.2,    # Credit stress = oil down
+    },
+
+    # =========================================================================
+    # COPPER - THE growth/demand proxy
+    # =========================================================================
+    'HGA Comdty': {
+        'ESA Index': 0.5,         # Strong equity correlation
+        'AUDUSD Curncy': 0.6,     # Australia copper exporter
+        'DXY Index': -0.4,        # Inverse to dollar
+        'CLA Comdty': 0.5,        # Both growth-sensitive
+        'EEM US Equity': 0.5,     # EM demand (China)
+        'VIX Index': -0.35,       # Risk-off = copper down
+        'NQA Index': 0.4,         # Tech demand
+        'USDBRL Curncy': -0.35,   # Brazil commodity exporter
+        'USDMXN Curncy': -0.3,    # Mexico commodity exporter
+        'SIA Comdty': 0.5,        # Silver industrial linkage
+        'H15T10YIE Index': 0.3,   # Positive with real rates
+    },
+
+    # =========================================================================
+    # NATURAL GAS - Idiosyncratic, weather-driven
+    # =========================================================================
+    'NGA Comdty': {
+        'CLA Comdty': 0.3,        # Energy complex (weak)
+        'DXY Index': -0.2,        # Weak dollar inverse
+        'ESA Index': 0.1,         # Weak equity correlation
+        'VIX Index': 0.1,         # Can spike during crises
+        'HOA Comdty': 0.5,        # Heating oil correlation
+    },
+
+    # =========================================================================
+    # VIX - Fear gauge
+    # =========================================================================
+    'VIX Index': {
+        'ESA Index': -0.8,        # Strong inverse to equities
+        'NQA Index': -0.75,       # Strong inverse to tech
+        'GCA Comdty': 0.4,        # Gold up in risk-off
+        'CLA Comdty': -0.3,       # Oil down in risk-off
+        'HGA Comdty': -0.35,      # Copper down in risk-off
+        'TYA Comdty': 0.3,        # Bonds up in risk-off
+        'USDJPY Curncy': -0.5,    # JPY strengthens in risk-off
+        'LF98OAS Index': 0.7,     # Credit spreads widen with VIX
+        'EEM US Equity': -0.6,    # EM down in risk-off
+    },
+
+    # =========================================================================
+    # CREDIT SPREADS
+    # =========================================================================
+    'LF98OAS Index': {  # HY OAS
+        'ESA Index': -0.5,        # Spreads widen when equities fall
+        'VIX Index': 0.7,         # Spreads widen with volatility
+        'GCA Comdty': 0.3,        # Gold up when credit stressed
+        'CLA Comdty': -0.2,       # Oil down when credit stressed
+        'LUACOAS Index': 0.85,    # IG and HY correlated
+    },
+
+    # =========================================================================
+    # AGRICULTURAL
+    # =========================================================================
+    'C A Comdty': {  # Corn
+        'S A Comdty': 0.7,        # Soybean correlation
+        'W A Comdty': 0.6,        # Wheat correlation
+        'DXY Index': -0.3,        # Dollar denominated
+        'USGGBE10 Index': 0.4,    # Inflation expectations
+    },
+    'S A Comdty': {  # Soybeans
+        'C A Comdty': 0.7,        # Corn correlation
+        'USDBRL Curncy': -0.4,    # Brazil exporter
+        'USGGBE10 Index': 0.4,    # Inflation expectations
     },
 }
 
@@ -626,6 +836,497 @@ class CorrelationEngine:
             except Exception as e:
                 print(f"Error calculating correlation for {comp_ticker}: {e}")
                 continue
+
+        return summary
+
+    # =========================================================================
+    # NEW CORRELATION METRICS - Phase 2 (Enhanced Macro Analysis)
+    # =========================================================================
+
+    def calculate_real_yield_impact(
+        self,
+        commodity_ticker: str = 'GCA Comdty',
+        tips_ticker: str = 'H15T10YIE Index'
+    ) -> Dict:
+        """
+        Calculate real yield correlation and regime.
+        Gold has -0.6 to -0.8 correlation with real yields historically.
+        """
+        try:
+            returns = self._get_return_data([commodity_ticker, tips_ticker])
+
+            if returns is None or tips_ticker not in returns.columns:
+                return {
+                    'real_yield_regime': 'unknown',
+                    'correlation': 0,
+                    'signal': 'neutral',
+                    'data_available': False
+                }
+
+            tips_data = fetch_price_data(tips_ticker, self.lookback_days)
+            if tips_data is None or len(tips_data) == 0:
+                return {
+                    'real_yield_regime': 'unknown',
+                    'correlation': 0,
+                    'signal': 'neutral',
+                    'data_available': False
+                }
+
+            # Calculate 60-day rolling correlation
+            if commodity_ticker in returns.columns:
+                rolling_corr = returns[commodity_ticker].rolling(60).corr(returns[tips_ticker])
+                current_corr = rolling_corr.iloc[-1] if len(rolling_corr) > 0 else 0
+            else:
+                current_corr = 0
+
+            tips_close = tips_data['Close'].iloc[-1]
+
+            if tips_close < 0:
+                real_yield_regime = 'negative'
+            elif tips_close < 1.0:
+                real_yield_regime = 'low'
+            elif tips_close < 2.0:
+                real_yield_regime = 'normal'
+            else:
+                real_yield_regime = 'high'
+
+            tips_mean = tips_data['Close'].mean()
+            tips_std = tips_data['Close'].std()
+            tips_zscore = (tips_close - tips_mean) / tips_std if tips_std > 0 else 0
+
+            if commodity_ticker == 'GCA Comdty':
+                if real_yield_regime == 'negative':
+                    signal = 'bullish'
+                elif real_yield_regime == 'high' and tips_zscore > 1.5:
+                    signal = 'bearish'
+                elif tips_zscore < -1:
+                    signal = 'bullish'
+                elif tips_zscore > 1:
+                    signal = 'bearish'
+                else:
+                    signal = 'neutral'
+            else:
+                signal = 'neutral'
+
+            return {
+                'real_yield_regime': real_yield_regime,
+                'real_yield_level': tips_close,
+                'real_yield_zscore': tips_zscore,
+                'correlation': current_corr if not pd.isna(current_corr) else 0,
+                'signal': signal,
+                'data_available': True
+            }
+
+        except Exception as e:
+            return {
+                'real_yield_regime': 'unknown',
+                'correlation': 0,
+                'signal': 'neutral',
+                'error': str(e),
+                'data_available': False
+            }
+
+    def calculate_risk_appetite_score(
+        self,
+        vix_ticker: str = 'VIX Index',
+        hy_oas_ticker: str = 'LF98OAS Index'
+    ) -> Dict:
+        """
+        Composite risk appetite using VIX + Credit spreads.
+        """
+        try:
+            result = {
+                'risk_appetite': 0,
+                'regime': 'neutral',
+                'vix_contribution': 0,
+                'credit_contribution': 0,
+                'data_available': False
+            }
+
+            vix_data = fetch_price_data(vix_ticker, self.lookback_days)
+            if vix_data is not None and len(vix_data) > 0:
+                vix_level = vix_data['Close'].iloc[-1]
+                vix_mean = vix_data['Close'].mean()
+                vix_std = vix_data['Close'].std()
+                vix_zscore = (vix_level - vix_mean) / vix_std if vix_std > 0 else 0
+
+                if vix_level < 12:
+                    vix_contribution = 5
+                elif vix_level < 15:
+                    vix_contribution = 3
+                elif vix_level < 20:
+                    vix_contribution = 1
+                elif vix_level < 25:
+                    vix_contribution = -2
+                elif vix_level < 35:
+                    vix_contribution = -4
+                else:
+                    vix_contribution = -5
+
+                result['vix_level'] = vix_level
+                result['vix_zscore'] = vix_zscore
+                result['vix_contribution'] = vix_contribution
+                result['data_available'] = True
+
+            credit_data = fetch_price_data(hy_oas_ticker, self.lookback_days)
+            if credit_data is not None and len(credit_data) > 0:
+                credit_level = credit_data['Close'].iloc[-1]
+                credit_mean = credit_data['Close'].mean()
+                credit_std = credit_data['Close'].std()
+                credit_zscore = (credit_level - credit_mean) / credit_std if credit_std > 0 else 0
+
+                if credit_level < 300:
+                    credit_contribution = 5
+                elif credit_level < 400:
+                    credit_contribution = 3
+                elif credit_level < 500:
+                    credit_contribution = 0
+                elif credit_level < 600:
+                    credit_contribution = -2
+                elif credit_level < 800:
+                    credit_contribution = -4
+                else:
+                    credit_contribution = -5
+
+                result['credit_level'] = credit_level
+                result['credit_zscore'] = credit_zscore
+                result['credit_contribution'] = credit_contribution
+
+            if result['data_available']:
+                if 'credit_level' in result:
+                    risk_appetite = result['vix_contribution'] + result['credit_contribution']
+                else:
+                    risk_appetite = result['vix_contribution'] * 2
+
+                result['risk_appetite'] = risk_appetite
+
+                if risk_appetite >= 6:
+                    result['regime'] = 'risk_on'
+                elif risk_appetite >= 2:
+                    result['regime'] = 'mild_risk_on'
+                elif risk_appetite >= -2:
+                    result['regime'] = 'neutral'
+                elif risk_appetite >= -6:
+                    result['regime'] = 'risk_off'
+                else:
+                    result['regime'] = 'crisis'
+
+            return result
+
+        except Exception as e:
+            return {
+                'risk_appetite': 0,
+                'regime': 'unknown',
+                'error': str(e),
+                'data_available': False
+            }
+
+    def calculate_yield_curve_signal(
+        self,
+        long_ticker: str = 'TYA Comdty',
+        short_ticker: str = 'TUA Comdty'
+    ) -> Dict:
+        """
+        Analyze yield curve shape for recession/growth signals.
+        """
+        try:
+            long_data = fetch_price_data(long_ticker, self.lookback_days)
+            short_data = fetch_price_data(short_ticker, self.lookback_days)
+
+            if long_data is None or short_data is None:
+                return {
+                    'curve_signal': 'unknown',
+                    'recession_probability': 0,
+                    'data_available': False
+                }
+
+            merged = pd.merge(
+                long_data[['Date', 'Close']].rename(columns={'Close': 'Long'}),
+                short_data[['Date', 'Close']].rename(columns={'Close': 'Short'}),
+                on='Date'
+            )
+
+            if len(merged) < 20:
+                return {
+                    'curve_signal': 'unknown',
+                    'recession_probability': 0,
+                    'data_available': False
+                }
+
+            current_spread = merged['Short'].iloc[-1] - merged['Long'].iloc[-1]
+            spread_20d_ago = merged['Short'].iloc[-20] - merged['Long'].iloc[-20]
+            spread_change = current_spread - spread_20d_ago
+
+            if current_spread < 0:
+                curve_signal = 'inverted'
+                recession_probability = min(0.8, abs(current_spread) / 5)
+            elif spread_change > 0.5:
+                curve_signal = 'steepening'
+                recession_probability = 0.1
+            elif spread_change < -0.5:
+                curve_signal = 'flattening'
+                recession_probability = 0.3
+            else:
+                curve_signal = 'normal'
+                recession_probability = 0.15
+
+            commodity_implications = {
+                'precious_metal': {
+                    'inverted': 'bullish', 'flattening': 'neutral',
+                    'steepening': 'bearish', 'normal': 'neutral'
+                }.get(curve_signal, 'neutral'),
+                'industrial_metal': {
+                    'inverted': 'bearish', 'flattening': 'cautious',
+                    'steepening': 'bullish', 'normal': 'neutral'
+                }.get(curve_signal, 'neutral'),
+                'energy': {
+                    'inverted': 'bearish', 'flattening': 'cautious',
+                    'steepening': 'bullish', 'normal': 'neutral'
+                }.get(curve_signal, 'neutral'),
+            }
+
+            return {
+                'curve_signal': curve_signal,
+                'spread_level': current_spread,
+                'spread_change_20d': spread_change,
+                'recession_probability': recession_probability,
+                'commodity_implications': commodity_implications,
+                'data_available': True
+            }
+
+        except Exception as e:
+            return {
+                'curve_signal': 'unknown',
+                'recession_probability': 0,
+                'error': str(e),
+                'data_available': False
+            }
+
+    def calculate_china_demand_proxy(
+        self,
+        copper_ticker: str = 'HGA Comdty',
+        em_ticker: str = 'EEM US Equity',
+        aud_ticker: str = 'AUDUSD Curncy'
+    ) -> Dict:
+        """
+        Composite China/EM demand signal using Copper + EM assets + AUD.
+        """
+        try:
+            result = {
+                'demand_score': 0,
+                'trend': 'stable',
+                'components': {},
+                'data_available': False
+            }
+
+            score_components = []
+
+            copper_data = fetch_price_data(copper_ticker, self.lookback_days)
+            if copper_data is not None and len(copper_data) >= 20:
+                copper_close = copper_data['Close']
+                copper_current = copper_close.iloc[-1]
+                copper_ma20 = copper_close.rolling(20).mean().iloc[-1]
+                copper_ma60 = copper_close.rolling(60).mean().iloc[-1] if len(copper_close) >= 60 else copper_ma20
+
+                copper_momentum = (copper_current / copper_ma20 - 1) * 100
+
+                if copper_current > copper_ma20 > copper_ma60:
+                    copper_score = 4
+                elif copper_current > copper_ma20:
+                    copper_score = 2
+                elif copper_current < copper_ma20 < copper_ma60:
+                    copper_score = -4
+                elif copper_current < copper_ma20:
+                    copper_score = -2
+                else:
+                    copper_score = 0
+
+                result['components']['copper'] = {
+                    'price': copper_current,
+                    'momentum': copper_momentum,
+                    'score': copper_score
+                }
+                score_components.append(copper_score)
+                result['data_available'] = True
+
+            aud_data = fetch_price_data(aud_ticker, self.lookback_days)
+            if aud_data is not None and len(aud_data) >= 20:
+                aud_close = aud_data['Close']
+                aud_current = aud_close.iloc[-1]
+                aud_ma20 = aud_close.rolling(20).mean().iloc[-1]
+                aud_momentum = (aud_current / aud_ma20 - 1) * 100
+
+                aud_score = 2 if aud_current > aud_ma20 else -2
+
+                result['components']['aud'] = {
+                    'rate': aud_current,
+                    'momentum': aud_momentum,
+                    'score': aud_score
+                }
+                score_components.append(aud_score)
+
+            em_data = fetch_price_data(em_ticker, self.lookback_days)
+            if em_data is not None and len(em_data) >= 20:
+                em_close = em_data['Close']
+                em_current = em_close.iloc[-1]
+                em_ma20 = em_close.rolling(20).mean().iloc[-1]
+                em_momentum = (em_current / em_ma20 - 1) * 100
+
+                em_score = 2 if em_current > em_ma20 else -2
+
+                result['components']['em'] = {
+                    'price': em_current,
+                    'momentum': em_momentum,
+                    'score': em_score
+                }
+                score_components.append(em_score)
+
+            if score_components:
+                result['demand_score'] = sum(score_components)
+
+                if copper_data is not None and len(copper_data) >= 40:
+                    copper_20d_change = copper_data['Close'].iloc[-1] / copper_data['Close'].iloc[-20] - 1
+                    copper_40d_change = copper_data['Close'].iloc[-1] / copper_data['Close'].iloc[-40] - 1
+
+                    if copper_20d_change > copper_40d_change / 2 and copper_20d_change > 0:
+                        result['trend'] = 'accelerating'
+                    elif copper_20d_change < copper_40d_change / 2 and copper_20d_change < 0:
+                        result['trend'] = 'decelerating'
+                    else:
+                        result['trend'] = 'stable'
+
+            return result
+
+        except Exception as e:
+            return {
+                'demand_score': 0,
+                'trend': 'unknown',
+                'error': str(e),
+                'data_available': False
+            }
+
+    def calculate_inflation_regime(
+        self,
+        breakeven_5y: str = 'USGGBE05 Index',
+        breakeven_10y: str = 'USGGBE10 Index'
+    ) -> Dict:
+        """
+        Inflation regime using breakevens and trend analysis.
+        """
+        try:
+            result = {
+                'inflation_regime': 'unknown',
+                'breakeven_level': None,
+                'breakeven_zscore': 0,
+                'trend': 'stable',
+                'data_available': False
+            }
+
+            be_data = fetch_price_data(breakeven_10y, self.lookback_days)
+            if be_data is None or len(be_data) < 20:
+                be_data = fetch_price_data(breakeven_5y, self.lookback_days)
+
+            if be_data is None or len(be_data) < 20:
+                return result
+
+            be_close = be_data['Close']
+            current_be = be_close.iloc[-1]
+            be_mean = be_close.mean()
+            be_std = be_close.std()
+            be_zscore = (current_be - be_mean) / be_std if be_std > 0 else 0
+
+            be_20d_ago = be_close.iloc[-20] if len(be_close) >= 20 else current_be
+            be_change = current_be - be_20d_ago
+
+            if current_be > 3.0:
+                base_regime = 'elevated'
+            elif current_be < 1.5:
+                base_regime = 'subdued'
+            else:
+                base_regime = 'normal'
+
+            if be_change > 0.2:
+                trend = 'rising'
+                inflation_regime = f'{base_regime}_rising' if base_regime != 'normal' else 'rising'
+            elif be_change < -0.2:
+                trend = 'falling'
+                inflation_regime = f'{base_regime}_falling' if base_regime != 'normal' else 'falling'
+            else:
+                trend = 'stable'
+                inflation_regime = base_regime
+
+            commodity_implications = {
+                'gold': {
+                    'rising': 'bullish', 'elevated_rising': 'very_bullish',
+                    'falling': 'neutral', 'subdued_falling': 'bearish',
+                    'elevated': 'bullish', 'subdued': 'neutral', 'normal': 'neutral'
+                }.get(inflation_regime, 'neutral'),
+                'tips': {
+                    'rising': 'bullish', 'elevated_rising': 'very_bullish',
+                    'falling': 'bearish',
+                }.get(inflation_regime, 'neutral'),
+                'agricultural': {
+                    'rising': 'bullish', 'elevated_rising': 'very_bullish',
+                    'elevated': 'bullish',
+                }.get(inflation_regime, 'neutral'),
+            }
+
+            result.update({
+                'inflation_regime': inflation_regime,
+                'breakeven_level': current_be,
+                'breakeven_zscore': be_zscore,
+                'trend': trend,
+                'change_20d': be_change,
+                'commodity_implications': commodity_implications,
+                'data_available': True
+            })
+
+            return result
+
+        except Exception as e:
+            return {
+                'inflation_regime': 'unknown',
+                'error': str(e),
+                'data_available': False
+            }
+
+    def get_enhanced_macro_summary(self) -> Dict:
+        """
+        Generate comprehensive macro environment summary using all new metrics.
+        """
+        summary = {
+            'timestamp': datetime.now().isoformat(),
+            'real_yield': self.calculate_real_yield_impact(),
+            'risk_appetite': self.calculate_risk_appetite_score(),
+            'yield_curve': self.calculate_yield_curve_signal(),
+            'china_demand': self.calculate_china_demand_proxy(),
+            'inflation': self.calculate_inflation_regime(),
+        }
+
+        scores = []
+        if summary['risk_appetite'].get('data_available'):
+            scores.append(summary['risk_appetite']['risk_appetite'])
+        if summary['china_demand'].get('data_available'):
+            scores.append(summary['china_demand']['demand_score'])
+
+        summary['composite_macro_score'] = sum(scores) / len(scores) if scores else 0
+
+        risk_regime = summary['risk_appetite'].get('regime', 'neutral')
+        inflation_regime = summary['inflation'].get('inflation_regime', 'unknown')
+        curve_signal = summary['yield_curve'].get('curve_signal', 'unknown')
+
+        if risk_regime == 'crisis':
+            summary['overall_regime'] = 'crisis'
+        elif risk_regime == 'risk_off' and curve_signal == 'inverted':
+            summary['overall_regime'] = 'recession_risk'
+        elif risk_regime == 'risk_on' and inflation_regime in ['rising', 'elevated_rising']:
+            summary['overall_regime'] = 'reflation'
+        elif risk_regime == 'risk_on':
+            summary['overall_regime'] = 'goldilocks'
+        elif inflation_regime in ['elevated', 'elevated_rising'] and risk_regime == 'risk_off':
+            summary['overall_regime'] = 'stagflation'
+        else:
+            summary['overall_regime'] = 'neutral'
 
         return summary
 

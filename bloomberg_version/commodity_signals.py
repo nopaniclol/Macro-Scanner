@@ -26,6 +26,16 @@ from correlation_analysis import (
     BOND_UNIVERSE,
     EQUITY_UNIVERSE,
     EXPECTED_CORRELATIONS,
+    # New expanded universes
+    PRECIOUS_METALS_UNIVERSE,
+    INDUSTRIAL_METALS_UNIVERSE,
+    ENERGY_UNIVERSE,
+    VOLATILITY_UNIVERSE,
+    INFLATION_UNIVERSE,
+    CREDIT_UNIVERSE,
+    AGRICULTURAL_UNIVERSE,
+    EM_UNIVERSE,
+    FULL_MACRO_UNIVERSE,
 )
 
 # ============================================================================
@@ -49,11 +59,11 @@ SIGNAL_THRESHOLDS = {
     'very_bearish': -7.0,    # Strong sell
 }
 
-# Regime adjustments by commodity type and macro quadrant
-# Quadrant 1: Goldilocks (growth up, inflation down)
-# Quadrant 2: Reflation (growth up, inflation up)
-# Quadrant 3: Stagflation (growth down, inflation up)
-# Quadrant 4: Risk-Off (growth down, inflation down)
+# =============================================================================
+# ENHANCED REGIME ADJUSTMENTS - Multi-Layer
+# =============================================================================
+
+# Base regime adjustments by commodity type and macro quadrant
 REGIME_ADJUSTMENTS = {
     'precious_metal': {  # Gold, Silver, Platinum, Palladium
         1: -0.20,   # Goldilocks: Risk-on, gold underperforms
@@ -66,6 +76,66 @@ REGIME_ADJUSTMENTS = {
         2: 0.25,    # Reflation: Strong growth + inflation
         3: 0.00,    # Stagflation: Mixed - inflation up, demand down
         4: -0.30,   # Risk-Off: Demand collapse
+    },
+    'industrial_metal': {  # Copper, Aluminum, Nickel
+        1: 0.20,    # Goldilocks: Growth supports demand
+        2: 0.25,    # Reflation: Strong growth
+        3: -0.20,   # Stagflation: Demand concerns
+        4: -0.30,   # Risk-Off: Demand collapse
+    },
+    'agricultural': {  # Corn, Soybeans, Wheat
+        1: 0.05,    # Goldilocks: Modest support
+        2: 0.15,    # Reflation: Inflation hedge
+        3: 0.20,    # Stagflation: Inflation hedge
+        4: -0.10,   # Risk-Off: Mild negative
+    },
+}
+
+# VIX regime adjustments (overlay on base quadrant)
+VIX_REGIME_ADJUSTMENTS = {
+    'precious_metal': {
+        'low_vol': -0.15, 'normal': 0.00, 'elevated': 0.20, 'crisis': 0.40,
+    },
+    'energy': {
+        'low_vol': 0.10, 'normal': 0.00, 'elevated': -0.10, 'crisis': -0.25,
+    },
+    'industrial_metal': {
+        'low_vol': 0.10, 'normal': 0.00, 'elevated': -0.15, 'crisis': -0.30,
+    },
+    'agricultural': {
+        'low_vol': 0.00, 'normal': 0.00, 'elevated': 0.05, 'crisis': 0.10,
+    },
+}
+
+# Real yield regime adjustments
+REAL_YIELD_REGIME_ADJUSTMENTS = {
+    'precious_metal': {
+        'negative': 0.25, 'low': 0.10, 'normal': 0.00, 'high': -0.20,
+    },
+    'energy': {
+        'negative': 0.05, 'low': 0.05, 'normal': 0.00, 'high': -0.05,
+    },
+    'industrial_metal': {
+        'negative': 0.05, 'low': 0.05, 'normal': 0.00, 'high': 0.05,
+    },
+    'agricultural': {
+        'negative': 0.10, 'low': 0.05, 'normal': 0.00, 'high': -0.05,
+    },
+}
+
+# Credit regime adjustments
+CREDIT_REGIME_ADJUSTMENTS = {
+    'precious_metal': {
+        'tight': -0.10, 'normal': 0.00, 'wide': 0.15, 'stress': 0.25,
+    },
+    'energy': {
+        'tight': 0.10, 'normal': 0.00, 'wide': -0.15, 'stress': -0.25,
+    },
+    'industrial_metal': {
+        'tight': 0.15, 'normal': 0.00, 'wide': -0.15, 'stress': -0.30,
+    },
+    'agricultural': {
+        'tight': 0.00, 'normal': 0.00, 'wide': 0.05, 'stress': 0.10,
     },
 }
 
@@ -661,24 +731,149 @@ def detect_macro_quadrant(price_data: Dict[str, pd.DataFrame]) -> Dict:
     }
 
 
+def detect_vix_regime(price_data: Dict[str, pd.DataFrame]) -> Dict:
+    """Determine VIX regime for volatility overlay."""
+    vix_ticker = 'VIX Index'
+    if vix_ticker not in price_data or price_data[vix_ticker] is None:
+        return {'regime': 'normal', 'level': 20, 'zscore': 0, 'data_available': False}
+
+    df = price_data[vix_ticker]
+    if len(df) < 20:
+        return {'regime': 'normal', 'level': 20, 'zscore': 0, 'data_available': False}
+
+    current_vix = df['Close'].iloc[-1]
+    vix_mean = df['Close'].mean()
+    vix_std = df['Close'].std()
+    zscore = (current_vix - vix_mean) / vix_std if vix_std > 0 else 0
+
+    if current_vix < 15:
+        regime = 'low_vol'
+    elif current_vix < 22:
+        regime = 'normal'
+    elif current_vix < 35:
+        regime = 'elevated'
+    else:
+        regime = 'crisis'
+
+    return {'regime': regime, 'level': current_vix, 'zscore': zscore, 'data_available': True}
+
+
+def detect_real_yield_regime(price_data: Dict[str, pd.DataFrame]) -> Dict:
+    """Determine real yield regime for rate environment overlay."""
+    tips_ticker = 'H15T10YIE Index'
+    if tips_ticker not in price_data or price_data[tips_ticker] is None:
+        return {'regime': 'normal', 'level': 1.5, 'data_available': False}
+
+    df = price_data[tips_ticker]
+    if len(df) < 20:
+        return {'regime': 'normal', 'level': 1.5, 'data_available': False}
+
+    current_yield = df['Close'].iloc[-1]
+    if current_yield < 0:
+        regime = 'negative'
+    elif current_yield < 1.0:
+        regime = 'low'
+    elif current_yield < 2.0:
+        regime = 'normal'
+    else:
+        regime = 'high'
+
+    return {'regime': regime, 'level': current_yield, 'data_available': True}
+
+
+def detect_credit_regime(price_data: Dict[str, pd.DataFrame]) -> Dict:
+    """Determine credit regime for risk appetite overlay."""
+    hy_ticker = 'LF98OAS Index'
+    if hy_ticker not in price_data or price_data[hy_ticker] is None:
+        return {'regime': 'normal', 'level': 400, 'data_available': False}
+
+    df = price_data[hy_ticker]
+    if len(df) < 20:
+        return {'regime': 'normal', 'level': 400, 'data_available': False}
+
+    current_spread = df['Close'].iloc[-1]
+    if current_spread < 350:
+        regime = 'tight'
+    elif current_spread < 500:
+        regime = 'normal'
+    elif current_spread < 700:
+        regime = 'wide'
+    else:
+        regime = 'stress'
+
+    return {'regime': regime, 'level': current_spread, 'data_available': True}
+
+
+def detect_macro_quadrant_enhanced(price_data: Dict[str, pd.DataFrame]) -> Dict:
+    """Enhanced macro quadrant with volatility, credit, and real yield overlays."""
+    base_quadrant = detect_macro_quadrant(price_data)
+    vix_regime = detect_vix_regime(price_data)
+    real_yield_regime = detect_real_yield_regime(price_data)
+    credit_regime = detect_credit_regime(price_data)
+
+    growth_strength = abs(base_quadrant['growth_signal'])
+    inflation_strength = abs(base_quadrant['inflation_signal'])
+    confidence = min((growth_strength + inflation_strength) / 10, 1.0)
+
+    return {
+        **base_quadrant,
+        'vix_regime': vix_regime['regime'],
+        'vix_level': vix_regime.get('level', 20),
+        'real_yield_regime': real_yield_regime['regime'],
+        'real_yield_level': real_yield_regime.get('level', 1.5),
+        'credit_regime': credit_regime['regime'],
+        'credit_level': credit_regime.get('level', 400),
+        'confidence': round(confidence, 2),
+        'overlays_available': {
+            'vix': vix_regime['data_available'],
+            'real_yield': real_yield_regime['data_available'],
+            'credit': credit_regime['data_available'],
+        }
+    }
+
+
 def apply_regime_adjustment(
     base_signal: float,
     quadrant: int,
     commodity_type: str
 ) -> float:
     """
-    Adjust signal based on macro quadrant.
-
-    WHY THIS WORKS:
-    - Different macro environments favor different commodities
-    - Stagflation (Quad 3): Gold outperforms (inflation hedge + safe haven)
-    - Reflation (Quad 2): Oil outperforms (growth proxy)
-    - Risk-Off (Quad 4): Gold outperforms, Oil underperforms
+    Adjust signal based on macro quadrant (basic version).
     """
     adjustment = REGIME_ADJUSTMENTS.get(commodity_type, {}).get(quadrant, 0)
     adjusted_signal = base_signal * (1 + adjustment)
-
     return np.clip(adjusted_signal, -10, 10)
+
+
+def apply_enhanced_regime_adjustment(
+    base_signal: float,
+    macro_regime: Dict,
+    commodity_type: str
+) -> Tuple[float, Dict]:
+    """Apply multi-layer regime adjustment including VIX, credit, and real yields."""
+    adjustment_breakdown = {'quadrant': 0, 'vix': 0, 'real_yield': 0, 'credit': 0, 'total': 0}
+
+    quadrant = macro_regime.get('quadrant', 2)
+    quadrant_adj = REGIME_ADJUSTMENTS.get(commodity_type, {}).get(quadrant, 0)
+    adjustment_breakdown['quadrant'] = quadrant_adj
+
+    vix_regime = macro_regime.get('vix_regime', 'normal')
+    vix_adj = VIX_REGIME_ADJUSTMENTS.get(commodity_type, {}).get(vix_regime, 0)
+    adjustment_breakdown['vix'] = vix_adj
+
+    real_yield_regime = macro_regime.get('real_yield_regime', 'normal')
+    real_yield_adj = REAL_YIELD_REGIME_ADJUSTMENTS.get(commodity_type, {}).get(real_yield_regime, 0)
+    adjustment_breakdown['real_yield'] = real_yield_adj
+
+    credit_regime = macro_regime.get('credit_regime', 'normal')
+    credit_adj = CREDIT_REGIME_ADJUSTMENTS.get(commodity_type, {}).get(credit_regime, 0)
+    adjustment_breakdown['credit'] = credit_adj
+
+    total_adjustment = quadrant_adj + vix_adj + real_yield_adj + credit_adj
+    adjustment_breakdown['total'] = total_adjustment
+
+    adjusted_signal = base_signal * (1 + total_adjustment)
+    return np.clip(adjusted_signal, -10, 10), adjustment_breakdown
 
 
 # ============================================================================
