@@ -192,9 +192,10 @@ def classify_signal(score: float) -> Tuple[str, str]:
 # SENTIMENT SCORE CALCULATION (from existing CCS)
 # ============================================================================
 
-def fetch_historical_data(ticker: str, days: int = 90) -> pd.DataFrame:
+def fetch_historical_data(ticker: str, days: int = 180) -> pd.DataFrame:
     """
     Fetch historical OHLCV data using BQL.
+    Note: Default increased to 180 days to support ROC_120 calculation.
     """
     try:
         end_date = datetime.now()
@@ -235,22 +236,23 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     Calculate all technical indicators for sentiment scoring.
     """
     # ROC - Rate of Change (multiple timeframes)
-    df['ROC_1'] = df['Close'].pct_change(1) * 100
-    df['ROC_2'] = df['Close'].pct_change(2) * 100
-    df['ROC_5'] = df['Close'].pct_change(5) * 100
-    df['ROC_10'] = df['Close'].pct_change(10) * 100
-    df['ROC_20'] = df['Close'].pct_change(20) * 100
+    # Longer periods better suited for macro-driven commodity analysis
+    df['ROC_5'] = df['Close'].pct_change(5) * 100      # Weekly momentum
+    df['ROC_10'] = df['Close'].pct_change(10) * 100    # Bi-weekly trend
+    df['ROC_20'] = df['Close'].pct_change(20) * 100    # Monthly trend
+    df['ROC_60'] = df['Close'].pct_change(60) * 100    # Quarterly - captures macro shifts
+    df['ROC_120'] = df['Close'].pct_change(120) * 100  # 6-month trend confirmation
 
-    # Moving Averages
-    df['MA_5'] = df['Close'].rolling(window=5).mean()
+    # Moving Averages (longer periods for macro-driven commodities)
     df['MA_10'] = df['Close'].rolling(window=10).mean()
     df['MA_20'] = df['Close'].rolling(window=20).mean()
     df['MA_50'] = df['Close'].rolling(window=50).mean()
+    df['MA_100'] = df['Close'].rolling(window=100).mean()
 
-    # MA Slopes (trend direction)
-    df['MA_5_slope'] = df['MA_5'].pct_change(5) * 100
+    # MA Slopes (trend direction) - adjusted for new MAs
     df['MA_10_slope'] = df['MA_10'].pct_change(5) * 100
     df['MA_20_slope'] = df['MA_20'].pct_change(10) * 100
+    df['MA_50_slope'] = df['MA_50'].pct_change(20) * 100
 
     # RSI
     delta = df['Close'].diff()
@@ -275,7 +277,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df['Vol_Ratio'] = df['Volume'] / df['Vol_MA_20']
         df['Vol_MA_5'] = df['Volume'].rolling(window=5).mean()
         df['Vol_Trend'] = df['Vol_MA_5'] / df['Vol_MA_20']
-        df['Vol_Price_Corr'] = np.sign(df['ROC_1']) * (df['Vol_Ratio'] - 1)
+        df['Vol_Price_Corr'] = np.sign(df['ROC_5']) * (df['Vol_Ratio'] - 1)
     else:
         df['Vol_Ratio'] = 1.0
         df['Vol_Trend'] = 1.0
@@ -381,27 +383,29 @@ def calculate_sentiment_score(df_row: pd.Series) -> float:
     - TD Sequential: 15% (NEW - counter-trend exhaustion)
     """
     # === ROC SIGNALS (35%) ===
+    # Weights adjusted for macro-driven commodity analysis
     roc_score = (
-        df_row['ROC_1'] * 0.15 +
-        df_row['ROC_2'] * 0.15 +
-        df_row['ROC_5'] * 0.25 +
-        df_row['ROC_10'] * 0.25 +
-        df_row['ROC_20'] * 0.20
+        df_row['ROC_5'] * 0.15 +    # Weekly momentum confirmation
+        df_row['ROC_10'] * 0.20 +   # Bi-weekly trend
+        df_row['ROC_20'] * 0.30 +   # Monthly trend (primary)
+        df_row['ROC_60'] * 0.25 +   # Quarterly macro shifts
+        df_row['ROC_120'] * 0.10    # 6-month trend confirmation
     )
     roc_normalized = normalize_to_range(roc_score) * 0.35
 
     # === MA TREND SIGNALS (25%) ===
+    # Adjusted for longer MAs suited to commodity macro analysis
     ma_slope_score = (
-        df_row['MA_5_slope'] * 0.3 +
-        df_row['MA_10_slope'] * 0.3 +
-        df_row['MA_20_slope'] * 0.4
+        df_row['MA_10_slope'] * 0.25 +
+        df_row['MA_20_slope'] * 0.35 +
+        df_row['MA_50_slope'] * 0.40
     )
 
-    # MA crossover signals
+    # MA crossover signals (using 10/20/50 alignment)
     ma_cross_score = 0
-    if df_row['MA_5'] > df_row['MA_10'] > df_row['MA_20']:
+    if df_row['MA_10'] > df_row['MA_20'] > df_row['MA_50']:
         ma_cross_score = 5  # Bullish alignment
-    elif df_row['MA_5'] < df_row['MA_10'] < df_row['MA_20']:
+    elif df_row['MA_10'] < df_row['MA_20'] < df_row['MA_50']:
         ma_cross_score = -5  # Bearish alignment
 
     ma_normalized = (
@@ -651,6 +655,7 @@ def detect_macro_quadrant(price_data: Dict[str, pd.DataFrame]) -> Dict:
     Inflation Signal: Treasury prices inverted (50%) + Inflation hedges (50%)
     """
     # === GROWTH SIGNAL ===
+    # Using 60-day lookback for more stable regime classification
     growth_tickers = ['ESA Index', 'NQA Index', 'RTYA Index']  # Equities
     cyclical_tickers = ['HGA Comdty', 'CLA Comdty']  # Copper, Oil
 
@@ -658,16 +663,16 @@ def detect_macro_quadrant(price_data: Dict[str, pd.DataFrame]) -> Dict:
     for ticker in growth_tickers:
         if ticker in price_data and price_data[ticker] is not None:
             df = price_data[ticker]
-            if len(df) >= 20:
-                ret = df['Close'].pct_change(20).iloc[-1] * 100
+            if len(df) >= 60:
+                ret = df['Close'].pct_change(60).iloc[-1] * 100
                 equity_returns.append(ret)
 
     cyclical_returns = []
     for ticker in cyclical_tickers:
         if ticker in price_data and price_data[ticker] is not None:
             df = price_data[ticker]
-            if len(df) >= 20:
-                ret = df['Close'].pct_change(20).iloc[-1] * 100
+            if len(df) >= 60:
+                ret = df['Close'].pct_change(60).iloc[-1] * 100
                 cyclical_returns.append(ret)
 
     equity_signal = np.mean(equity_returns) if equity_returns else 0
@@ -677,23 +682,25 @@ def detect_macro_quadrant(price_data: Dict[str, pd.DataFrame]) -> Dict:
 
     # === INFLATION SIGNAL ===
     # Bond prices: falling bonds = rising yields = rising inflation
+    # NOTE: Removed gold/silver from inflation hedges to avoid circular logic
+    # (gold signal was being influenced by gold's own price movement)
     bond_tickers = ['TUA Comdty', 'FVA Comdty', 'TYA Comdty', 'USA Comdty']
-    inflation_hedge_tickers = ['GCA Comdty', 'SIA Comdty', 'CLA Comdty']
+    inflation_hedge_tickers = ['CLA Comdty', 'HGA Comdty']  # Oil and Copper only
 
     bond_returns = []
     for ticker in bond_tickers:
         if ticker in price_data and price_data[ticker] is not None:
             df = price_data[ticker]
-            if len(df) >= 20:
-                ret = df['Close'].pct_change(20).iloc[-1] * 100
+            if len(df) >= 60:
+                ret = df['Close'].pct_change(60).iloc[-1] * 100
                 bond_returns.append(ret)
 
     inflation_returns = []
     for ticker in inflation_hedge_tickers:
         if ticker in price_data and price_data[ticker] is not None:
             df = price_data[ticker]
-            if len(df) >= 20:
-                ret = df['Close'].pct_change(20).iloc[-1] * 100
+            if len(df) >= 60:
+                ret = df['Close'].pct_change(60).iloc[-1] * 100
                 inflation_returns.append(ret)
 
     # Invert bond signal (falling bonds = rising yields = rising inflation)
@@ -877,6 +884,469 @@ def apply_enhanced_regime_adjustment(
 
 
 # ============================================================================
+# GOLD-SPECIFIC REGIME DETECTOR
+# ============================================================================
+# Addresses gold's non-traditional drivers: central bank buying, de-dollarization,
+# ETF flows, and correlation breakdowns that standard macro frameworks miss.
+
+def get_asset_return(price_data: Dict, ticker: str, lookback: int) -> float:
+    """
+    Helper to get percentage return for a ticker over lookback period.
+
+    Args:
+        price_data: Dict of price DataFrames
+        ticker: Bloomberg ticker
+        lookback: Number of days for return calculation
+
+    Returns:
+        Percentage return, or 0 if data unavailable
+    """
+    if ticker not in price_data or price_data[ticker] is None:
+        return 0.0
+    df = price_data[ticker]
+    if len(df) < lookback:
+        return 0.0
+    return (df['Close'].iloc[-1] / df['Close'].iloc[-lookback] - 1) * 100
+
+
+def calculate_etf_flow_signal(price_data: Dict, lookback_short: int = 20, lookback_long: int = 60) -> Dict:
+    """
+    Calculate gold ETF flow signal based on price/AUM momentum.
+
+    In production, would use EQY_SH_OUT field for shares outstanding.
+    Here we use price as a proxy since ETF prices track NAV closely.
+
+    Logic:
+    - Rising ETF prices with volume = inflows = bullish
+    - Strong 20d move confirmed by 60d trend = high conviction
+
+    Scoring:
+    - Strong inflow (>2% 20d): +5
+    - Moderate inflow (0.5-2%): +2
+    - Neutral (-0.5% to 0.5%): 0
+    - Moderate outflow (-2% to -0.5%): -2
+    - Strong outflow (<-2%): -5
+
+    Args:
+        price_data: Dict of price DataFrames
+        lookback_short: Short-term lookback (default 20 days)
+        lookback_long: Long-term lookback (default 60 days)
+
+    Returns:
+        Dict with signal, flow metrics, and data availability
+    """
+    etf_tickers = ['GLD US Equity', 'IAU US Equity']
+
+    total_flow_short = 0.0
+    total_flow_long = 0.0
+    count = 0
+
+    for ticker in etf_tickers:
+        if ticker in price_data and price_data[ticker] is not None:
+            df = price_data[ticker]
+            if len(df) >= lookback_long:
+                flow_short = (df['Close'].iloc[-1] / df['Close'].iloc[-lookback_short] - 1) * 100
+                flow_long = (df['Close'].iloc[-1] / df['Close'].iloc[-lookback_long] - 1) * 100
+                total_flow_short += flow_short
+                total_flow_long += flow_long
+                count += 1
+
+    if count == 0:
+        return {'signal': 0, 'flow_20d': 0, 'flow_60d': 0, 'data_available': False}
+
+    avg_flow_short = total_flow_short / count
+    avg_flow_long = total_flow_long / count
+
+    # Score based on short-term flow
+    if avg_flow_short > 2:
+        base_score = 5
+    elif avg_flow_short > 0.5:
+        base_score = 2
+    elif avg_flow_short > -0.5:
+        base_score = 0
+    elif avg_flow_short > -2:
+        base_score = -2
+    else:
+        base_score = -5
+
+    # Trend confirmation adjustment
+    trend_confirms = (avg_flow_short > 0 and avg_flow_long > 0) or \
+                     (avg_flow_short < 0 and avg_flow_long < 0)
+
+    if trend_confirms:
+        final_score = base_score * 1.5
+    else:
+        final_score = base_score * 0.5
+
+    return {
+        'signal': float(np.clip(final_score, -10, 10)),
+        'flow_20d': round(avg_flow_short, 2),
+        'flow_60d': round(avg_flow_long, 2),
+        'trend_confirms': trend_confirms,
+        'data_available': True
+    }
+
+
+def calculate_correlation_breakdown_score(
+    price_data: Dict,
+    correlation_engine,
+    commodity_ticker: str = 'GCA Comdty'
+) -> Dict:
+    """
+    Detect when gold's traditional correlations have broken down.
+
+    Key Relationships:
+    - Gold/DXY: Expected -0.5, breakdown if > -0.2
+    - Gold/Real Yields: Expected -0.7, breakdown if > -0.3
+    - Gold/10Y Treasury: Expected -0.3, breakdown if > 0.0
+
+    Interpretation:
+    - Breakdown + gold rising = structural demand (very bullish)
+    - Breakdown + gold falling = concerning weakness
+    - No breakdown = traditional framework applies
+
+    Args:
+        price_data: Dict of price DataFrames
+        correlation_engine: CorrelationEngine instance
+        commodity_ticker: Gold ticker (default GCA Comdty)
+
+    Returns:
+        Dict with signal, regime classification, and breakdown details
+    """
+    key_correlations = {
+        'DXY Index': {'expected': -0.5, 'breakdown_threshold': -0.2},
+        'H15T10YIE Index': {'expected': -0.7, 'breakdown_threshold': -0.3},
+        'TYA Comdty': {'expected': -0.3, 'breakdown_threshold': 0.0},
+    }
+
+    breakdown_count = 0
+    breakdown_details = {}
+
+    for ticker, params in key_correlations.items():
+        try:
+            result = correlation_engine.detect_correlation_regime(
+                commodity_ticker, ticker
+            )
+
+            current_corr = result.get('current_corr', 0)
+            expected_corr = params['expected']
+            threshold = params['breakdown_threshold']
+
+            # For inverse correlations, breakdown = correlation moved toward positive
+            if expected_corr < 0:
+                is_breakdown = current_corr > threshold
+            else:
+                is_breakdown = abs(current_corr - expected_corr) > 0.3
+
+            if is_breakdown:
+                breakdown_count += 1
+                breakdown_details[ticker] = {
+                    'current': round(current_corr, 3),
+                    'expected': expected_corr,
+                    'deviation': round(current_corr - expected_corr, 3)
+                }
+        except Exception:
+            continue
+
+    # Get gold's recent trend
+    gold_trend = get_asset_return(price_data, commodity_ticker, 20)
+
+    # Scoring logic
+    if breakdown_count == 0:
+        regime = 'traditional'
+        score = 0
+    elif breakdown_count >= 2:
+        regime = 'structural'
+        if gold_trend > 0:
+            # Gold rising despite correlation breakdown = very bullish
+            score = 5 + (breakdown_count * 1.5)
+        else:
+            # Gold falling during breakdown = concerning
+            score = -3
+    else:
+        regime = 'transitional'
+        score = 2 if gold_trend > 0 else -1
+
+    return {
+        'signal': float(np.clip(score, -10, 10)),
+        'regime': regime,
+        'breakdown_count': breakdown_count,
+        'breakdown_details': breakdown_details,
+        'gold_trend': round(gold_trend, 2),
+        'data_available': True
+    }
+
+
+def calculate_safe_haven_index(price_data: Dict, lookback: int = 20) -> Dict:
+    """
+    Calculate safe haven demand index for gold.
+
+    Distinguishes fear-driven demand from structural demand by comparing
+    gold's behavior to VIX, JPY, and Treasuries.
+
+    Interpretation:
+    - Gold up + VIX flat = STRUCTURAL (non-fear driven, most bullish)
+    - Gold up + VIX up = FEAR-DRIVEN (bullish but may reverse)
+    - Gold flat + VIX up = Gold lagging (neutral)
+    - Gold down + VIX down = Risk-on (bearish for gold)
+
+    Args:
+        price_data: Dict of price DataFrames
+        lookback: Days for return calculation (default 20)
+
+    Returns:
+        Dict with signal, regime classification, and components
+    """
+    gold_return = get_asset_return(price_data, 'GCA Comdty', lookback)
+    vix_change = get_asset_return(price_data, 'VIX Index', lookback)
+    usdjpy_return = get_asset_return(price_data, 'USDJPY Curncy', lookback)
+    treasury_return = get_asset_return(price_data, 'TYA Comdty', lookback)
+
+    # Gold/VIX divergence score
+    if gold_return > 2:  # Gold meaningfully up
+        if vix_change < 5:  # VIX not spiking
+            gold_vix_score = 4  # Structural demand
+        else:
+            gold_vix_score = 2  # Fear-driven
+    elif gold_return < -2:  # Gold meaningfully down
+        if vix_change > 10:
+            gold_vix_score = -2  # Unusual - gold should rise with VIX
+        else:
+            gold_vix_score = -3  # Normal risk-on behavior
+    else:
+        gold_vix_score = 0
+
+    # JPY score (negative USDJPY return = JPY strength = safe haven flow)
+    jpy_score = 2 if usdjpy_return < -1 else (-1 if usdjpy_return > 1 else 0)
+
+    # Treasury score (positive return = flight to quality)
+    treasury_score = 2 if treasury_return > 1 else (-1 if treasury_return < -1 else 0)
+
+    # Gold participation in safe haven flow
+    other_havens_bid = usdjpy_return < 0 or treasury_return > 0
+    if gold_return > 0 and other_havens_bid:
+        participation_score = 2  # Gold participating in safe haven bid
+    elif gold_return < 0 and other_havens_bid:
+        participation_score = -2  # Gold NOT participating (structural weakness)
+    else:
+        participation_score = 0
+
+    total_score = gold_vix_score + jpy_score + treasury_score + participation_score
+
+    # Classify regime
+    if total_score > 5:
+        regime = 'structural_demand'
+    elif total_score > 2:
+        regime = 'fear_driven'
+    elif total_score > -2:
+        regime = 'neutral'
+    else:
+        regime = 'risk_on_headwind'
+
+    return {
+        'signal': float(np.clip(total_score, -10, 10)),
+        'regime': regime,
+        'components': {
+            'gold_vix_score': gold_vix_score,
+            'jpy_score': jpy_score,
+            'treasury_score': treasury_score,
+            'participation_score': participation_score,
+        },
+        'gold_return': round(gold_return, 2),
+        'vix_change': round(vix_change, 2),
+        'data_available': True
+    }
+
+
+def calculate_dedollarization_proxy(price_data: Dict, lookback: int = 60) -> Dict:
+    """
+    Calculate de-dollarization / central bank demand proxy.
+
+    Key Signal:
+    - Gold rising DESPITE DXY strength = structural demand from price-insensitive
+      actors (central banks, sovereign wealth funds)
+    - EM currency stress often accompanies central bank gold buying as reserves
+      are diversified away from USD
+
+    Args:
+        price_data: Dict of price DataFrames
+        lookback: Days for return calculation (default 60 for macro view)
+
+    Returns:
+        Dict with signal, regime classification, and metrics
+    """
+    gold_return = get_asset_return(price_data, 'GCA Comdty', lookback)
+    dxy_return = get_asset_return(price_data, 'DXY Index', lookback)
+
+    # EM currency stress (positive return = USD strength = EM weakness)
+    em_tickers = ['USDZAR Curncy', 'USDBRL Curncy', 'USDMXN Curncy']
+    em_stress = 0.0
+    em_count = 0
+    for ticker in em_tickers:
+        ret = get_asset_return(price_data, ticker, lookback)
+        if ret != 0:
+            em_stress += ret
+            em_count += 1
+
+    avg_em_stress = em_stress / em_count if em_count > 0 else 0
+
+    # Gold/DXY divergence score
+    if gold_return > 5:
+        if dxy_return > 0:
+            divergence_score = 8  # Extreme structural demand
+        elif dxy_return > -2:
+            divergence_score = 5  # Strong structural demand
+        else:
+            divergence_score = 2  # Normal inverse relationship
+    elif gold_return > 2:
+        if dxy_return > 0:
+            divergence_score = 4  # Moderate structural demand
+        else:
+            divergence_score = 1  # Normal
+    elif gold_return < -2:
+        if dxy_return < -2:
+            divergence_score = -4  # Gold weak despite dollar weakness (very bearish)
+        else:
+            divergence_score = -2  # Normal inverse
+    else:
+        divergence_score = 0
+
+    # EM stress contribution
+    if avg_em_stress > 5 and gold_return > 2:
+        em_contribution = 3  # Central banks likely buying
+    elif avg_em_stress > 5 and gold_return < 0:
+        em_contribution = -2  # EM selling gold? Concerning
+    else:
+        em_contribution = 0
+
+    total_score = divergence_score + em_contribution
+
+    # Classify regime
+    if total_score > 6:
+        regime = 'strong_structural_demand'
+        confidence = 'high'
+    elif total_score > 3:
+        regime = 'moderate_structural_demand'
+        confidence = 'medium'
+    elif total_score > -2:
+        regime = 'traditional_dynamics'
+        confidence = 'medium'
+    else:
+        regime = 'structural_weakness'
+        confidence = 'high'
+
+    return {
+        'signal': float(np.clip(total_score, -10, 10)),
+        'regime': regime,
+        'confidence': confidence,
+        'gold_return': round(gold_return, 2),
+        'dxy_return': round(dxy_return, 2),
+        'em_stress': round(avg_em_stress, 2),
+        'divergence_score': divergence_score,
+        'em_contribution': em_contribution,
+        'data_available': True
+    }
+
+
+def detect_gold_specific_regime(
+    price_data: Dict,
+    correlation_engine
+) -> Dict:
+    """
+    Master gold regime detection combining all four components.
+
+    Components (25% each):
+    1. ETF Flow Signal: Institutional demand via GLD/IAU
+    2. Correlation Breakdown: Traditional relationships failing
+    3. Safe Haven Index: Fear vs structural demand
+    4. De-Dollarization Proxy: Central bank/non-dollar buying
+
+    Output:
+    - gold_regime_score: -10 to +10
+    - gold_regime: 'traditional', 'transitional', 'structural'
+    - framework_confidence: How much to trust standard macro framework
+    - recommendation: Signal adjustment recommendation
+
+    Args:
+        price_data: Dict of price DataFrames
+        correlation_engine: CorrelationEngine instance
+
+    Returns:
+        Comprehensive gold regime analysis dict
+    """
+    # Calculate all components
+    etf_flow = calculate_etf_flow_signal(price_data)
+    correlation_breakdown = calculate_correlation_breakdown_score(
+        price_data, correlation_engine
+    )
+    safe_haven = calculate_safe_haven_index(price_data)
+    dedollarization = calculate_dedollarization_proxy(price_data)
+
+    # Weighted combination (equal weights: 25% each)
+    weights = {
+        'etf_flow': 0.25,
+        'correlation_breakdown': 0.25,
+        'safe_haven': 0.25,
+        'dedollarization': 0.25,
+    }
+
+    total_score = (
+        etf_flow['signal'] * weights['etf_flow'] +
+        correlation_breakdown['signal'] * weights['correlation_breakdown'] +
+        safe_haven['signal'] * weights['safe_haven'] +
+        dedollarization['signal'] * weights['dedollarization']
+    )
+
+    # Determine overall regime
+    breakdown_regime = correlation_breakdown.get('regime', 'traditional')
+    dedollar_regime = dedollarization.get('regime', 'traditional_dynamics')
+
+    if breakdown_regime == 'structural' or 'structural' in dedollar_regime:
+        gold_regime = 'structural'
+        framework_confidence = 0.3  # Low confidence in standard macro
+    elif breakdown_regime == 'transitional':
+        gold_regime = 'transitional'
+        framework_confidence = 0.6  # Moderate confidence
+    else:
+        gold_regime = 'traditional'
+        framework_confidence = 1.0  # Full confidence in standard macro
+
+    # Generate recommendation
+    if gold_regime == 'structural' and total_score > 3:
+        recommendation = {
+            'action': 'override_macro_bearish',
+            'description': 'Structural demand strong - override bearish macro signals',
+            'signal_adjustment': min(total_score * 0.5, 3),  # Add up to +3 to signal
+        }
+    elif gold_regime == 'structural' and total_score < -3:
+        recommendation = {
+            'action': 'confirm_weakness',
+            'description': 'Structural indicators confirm weakness',
+            'signal_adjustment': max(total_score * 0.3, -2),  # Subtract up to -2
+        }
+    else:
+        recommendation = {
+            'action': 'standard_framework',
+            'description': 'Use standard macro quadrant framework',
+            'signal_adjustment': 0,
+        }
+
+    return {
+        'gold_regime_score': round(total_score, 2),
+        'gold_regime': gold_regime,
+        'framework_confidence': framework_confidence,
+        'recommendation': recommendation,
+        'component_scores': {
+            'etf_flow': etf_flow,
+            'correlation_breakdown': correlation_breakdown,
+            'safe_haven': safe_haven,
+            'dedollarization': dedollarization,
+        },
+        'timestamp': datetime.now().isoformat(),
+    }
+
+
+# ============================================================================
 # COMPOSITE SIGNAL GENERATOR
 # ============================================================================
 
@@ -911,6 +1381,16 @@ class CommoditySignalGenerator:
 
         # Add additional commodities for macro analysis
         all_tickers.extend(['HGA Comdty', 'NGA Comdty'])
+
+        # Add gold ETFs for flow analysis
+        all_tickers.extend(['GLD US Equity', 'IAU US Equity'])
+
+        # Add EM currencies for de-dollarization proxy
+        all_tickers.extend(['USDZAR Curncy', 'USDBRL Curncy', 'USDMXN Curncy'])
+
+        # Add real yield indicators
+        all_tickers.extend(['H15T10YIE Index', 'H15T5YIE Index'])
+
         all_tickers = list(set(all_tickers))  # Remove duplicates
 
         price_data = {}
@@ -1000,10 +1480,27 @@ class CommoditySignalGenerator:
         # === FINAL SIGNAL ===
         final_signal = np.clip(adjusted_signal, -10, 10)
 
+        # === GOLD-SPECIFIC REGIME ADJUSTMENT ===
+        # For gold, apply additional adjustment based on structural demand indicators
+        gold_regime_result = None
+        gold_regime_adjustment = 0.0
+
+        if commodity_ticker == 'GCA Comdty':
+            gold_regime_result = detect_gold_specific_regime(
+                price_data,
+                self.correlation_engine
+            )
+
+            # Apply gold-specific adjustment if recommended
+            adjustment = gold_regime_result['recommendation'].get('signal_adjustment', 0)
+            if adjustment != 0:
+                gold_regime_adjustment = adjustment
+                final_signal = np.clip(final_signal + adjustment, -10, 10)
+
         # Classify signal
         classification, action = classify_signal(final_signal)
 
-        return {
+        result = {
             'signal': round(final_signal, 2),
             'classification': classification,
             'action': action,
@@ -1021,6 +1518,13 @@ class CommoditySignalGenerator:
             'commodity_type': commodity_type,
             'timestamp': datetime.now().isoformat(),
         }
+
+        # Add gold-specific regime info if applicable
+        if gold_regime_result is not None:
+            result['gold_regime'] = gold_regime_result
+            result['components']['gold_regime_adjustment'] = round(gold_regime_adjustment, 2)
+
+        return result
 
     def generate_all_signals(self) -> Dict[str, Dict]:
         """
@@ -1251,6 +1755,38 @@ def print_signal_report(signals: Dict[str, Dict]):
               f"{sentiment:>6.2f} {correlation:>6.2f} {divergence:>6.2f} {regime_adj:>6.2f}")
 
     print("="*100)
+
+    # Print Gold-Specific Regime Info if available
+    gold_signal = signals.get('GCA Comdty', {})
+    if 'gold_regime' in gold_signal:
+        gold_regime = gold_signal['gold_regime']
+        print(f"\n{'GOLD-SPECIFIC REGIME ANALYSIS':^100}")
+        print("-"*100)
+        print(f"  Regime: {gold_regime.get('gold_regime', 'N/A').upper()}")
+        print(f"  Regime Score: {gold_regime.get('gold_regime_score', 0):+.2f}")
+        print(f"  Framework Confidence: {gold_regime.get('framework_confidence', 1.0):.0%}")
+
+        recommendation = gold_regime.get('recommendation', {})
+        print(f"  Action: {recommendation.get('action', 'N/A')}")
+        print(f"  Description: {recommendation.get('description', 'N/A')}")
+
+        # Component breakdown
+        components = gold_regime.get('component_scores', {})
+        print(f"\n  Component Scores:")
+        print(f"    ETF Flow:              {components.get('etf_flow', {}).get('signal', 0):+.2f}")
+        print(f"    Correlation Breakdown: {components.get('correlation_breakdown', {}).get('signal', 0):+.2f}")
+        print(f"    Safe Haven Index:      {components.get('safe_haven', {}).get('signal', 0):+.2f}")
+        print(f"    De-Dollarization:      {components.get('dedollarization', {}).get('signal', 0):+.2f}")
+
+        # Show breakdown details if any
+        breakdown = components.get('correlation_breakdown', {})
+        if breakdown.get('breakdown_count', 0) > 0:
+            print(f"\n  Correlation Breakdowns Detected: {breakdown.get('breakdown_count', 0)}")
+            for ticker, detail in breakdown.get('breakdown_details', {}).items():
+                print(f"    {ticker}: Current={detail['current']:.2f}, Expected={detail['expected']:.2f}")
+
+        print("-"*100)
+
     print(f"\nSignal Interpretation:")
     print(f"  >= 7.0: Very Bullish (Strong Buy)")
     print(f"  >= 4.0: Bullish (Buy)")
@@ -1397,14 +1933,16 @@ def verify_signal_calculation(ticker: str, days: int = 90) -> Dict:
 
     print(f"\n1. RAW INDICATOR VALUES:")
     print(f"   Close Price: {latest['Close']:.2f}")
-    print(f"   ROC_1 (1-day): {latest['ROC_1']:.4f}%")
     print(f"   ROC_5 (5-day): {latest['ROC_5']:.4f}%")
     print(f"   ROC_10 (10-day): {latest['ROC_10']:.4f}%")
     print(f"   ROC_20 (20-day): {latest['ROC_20']:.4f}%")
+    print(f"   ROC_60 (60-day): {latest['ROC_60']:.4f}%")
+    print(f"   ROC_120 (120-day): {latest['ROC_120']:.4f}%")
     print(f"   RSI (14): {latest['RSI']:.2f}")
-    print(f"   MA_5: {latest['MA_5']:.2f}")
     print(f"   MA_10: {latest['MA_10']:.2f}")
     print(f"   MA_20: {latest['MA_20']:.2f}")
+    print(f"   MA_50: {latest['MA_50']:.2f}")
+    print(f"   MA_100: {latest['MA_100']:.2f}")
 
     # TD Sequential
     print(f"\n2. TD SEQUENTIAL STATUS:")
@@ -1413,11 +1951,11 @@ def verify_signal_calculation(ticker: str, days: int = 90) -> Dict:
 
     # Calculate components
     roc_raw = (
-        latest['ROC_1'] * 0.15 +
-        latest['ROC_2'] * 0.15 +
-        latest['ROC_5'] * 0.25 +
-        latest['ROC_10'] * 0.25 +
-        latest['ROC_20'] * 0.20
+        latest['ROC_5'] * 0.15 +
+        latest['ROC_10'] * 0.20 +
+        latest['ROC_20'] * 0.30 +
+        latest['ROC_60'] * 0.25 +
+        latest['ROC_120'] * 0.10
     )
 
     td_raw = get_td_signal_score(latest)

@@ -9,6 +9,11 @@ import bql
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.backends.backend_pdf import PdfPages
+from io import BytesIO
+import os
 
 # ============================================================================
 # CONFIGURATION
@@ -797,11 +802,588 @@ def analyze_macro_quadrant(results_by_category):
 
 
 # ============================================================================
+# GOLD-SPECIFIC REGIME ANALYSIS
+# ============================================================================
+
+def analyze_gold_regime(results_by_category):
+    """
+    Analyze gold-specific regime to detect structural demand that may override
+    standard macro framework signals.
+
+    Components:
+    1. ETF Flow Proxy: Gold price momentum as flow indicator
+    2. Correlation Breakdown: Gold vs DXY divergence detection
+    3. Safe Haven Index: Gold vs VIX behavior
+    4. De-Dollarization Proxy: Gold strength vs USD
+
+    Returns: Dictionary with gold regime analysis
+    """
+    # Extract all results
+    all_results = {}
+    for category, results in results_by_category.items():
+        for result in results:
+            all_results[result['ticker']] = result
+
+    def get_score(ticker):
+        return all_results.get(ticker, {}).get('current_score', np.nan)
+
+    def get_avg_5d(ticker):
+        return all_results.get(ticker, {}).get('avg_5d', np.nan)
+
+    def get_avg_20d(ticker):
+        return all_results.get(ticker, {}).get('avg_20d', np.nan)
+
+    # === COMPONENT 1: ETF FLOW PROXY (25%) ===
+    # Use gold score momentum as proxy for ETF flows
+    gold_score = get_score('GCA Comdty')
+    gold_avg_5d = get_avg_5d('GCA Comdty')
+    gold_avg_20d = get_avg_20d('GCA Comdty')
+
+    if not pd.isna(gold_score) and not pd.isna(gold_avg_5d):
+        # Strong momentum = strong flows
+        if gold_score > 4 and gold_avg_5d > 2:
+            etf_flow_score = 7.5
+            etf_flow_regime = 'strong_inflow'
+        elif gold_score > 2:
+            etf_flow_score = 4.0
+            etf_flow_regime = 'moderate_inflow'
+        elif gold_score > -2:
+            etf_flow_score = 0.0
+            etf_flow_regime = 'neutral'
+        elif gold_score > -4:
+            etf_flow_score = -4.0
+            etf_flow_regime = 'moderate_outflow'
+        else:
+            etf_flow_score = -7.5
+            etf_flow_regime = 'strong_outflow'
+
+        # Trend confirmation
+        if not pd.isna(gold_avg_20d):
+            if (gold_score > 0 and gold_avg_20d > 0) or (gold_score < 0 and gold_avg_20d < 0):
+                etf_flow_score *= 1.3  # Trend confirms
+    else:
+        etf_flow_score = 0
+        etf_flow_regime = 'no_data'
+
+    # === COMPONENT 2: CORRELATION BREAKDOWN (25%) ===
+    # Check if gold is moving independently of DXY
+    dxy_score = get_score('DXY Index')
+
+    if not pd.isna(gold_score) and not pd.isna(dxy_score):
+        # Normal: Gold inverse to DXY
+        # Breakdown: Both moving same direction or gold strong despite DXY strength
+        if gold_score > 2 and dxy_score > 0:
+            # Gold up despite dollar strength = structural demand
+            breakdown_score = 8.0
+            breakdown_regime = 'structural_demand'
+        elif gold_score > 2 and dxy_score < -2:
+            # Gold up with dollar weak = normal inverse
+            breakdown_score = 2.0
+            breakdown_regime = 'traditional'
+        elif gold_score < -2 and dxy_score < -2:
+            # Gold down despite dollar weakness = structural weakness
+            breakdown_score = -6.0
+            breakdown_regime = 'structural_weakness'
+        else:
+            breakdown_score = 0.0
+            breakdown_regime = 'traditional'
+    else:
+        breakdown_score = 0
+        breakdown_regime = 'no_data'
+
+    # === COMPONENT 3: SAFE HAVEN INDEX (25%) ===
+    # Compare gold behavior to other safe havens
+    treasury_score = get_score('TYA Comdty')  # 10Y Treasury
+    usdjpy_score = get_score('USDJPY Curncy')  # JPY (inverse)
+
+    safe_haven_components = []
+
+    if not pd.isna(gold_score):
+        # Gold/Treasury alignment
+        if not pd.isna(treasury_score):
+            if gold_score > 0 and treasury_score > 0:
+                safe_haven_components.append(3)  # Both bid = flight to safety
+            elif gold_score > 0 and treasury_score < 0:
+                safe_haven_components.append(2)  # Gold unique bid = structural
+            elif gold_score < 0 and treasury_score > 0:
+                safe_haven_components.append(-2)  # Gold lagging = weakness
+            else:
+                safe_haven_components.append(0)
+
+        # Gold/JPY alignment (USDJPY down = JPY strength)
+        if not pd.isna(usdjpy_score):
+            if gold_score > 0 and usdjpy_score < 0:
+                safe_haven_components.append(2)  # Both safe havens bid
+            elif gold_score > 0 and usdjpy_score > 0:
+                safe_haven_components.append(3)  # Gold up despite risk-on = structural
+            else:
+                safe_haven_components.append(0)
+
+    if safe_haven_components:
+        safe_haven_score = np.mean(safe_haven_components) * 2
+        if safe_haven_score > 4:
+            safe_haven_regime = 'structural_demand'
+        elif safe_haven_score > 1:
+            safe_haven_regime = 'fear_driven'
+        elif safe_haven_score > -2:
+            safe_haven_regime = 'neutral'
+        else:
+            safe_haven_regime = 'risk_on_headwind'
+    else:
+        safe_haven_score = 0
+        safe_haven_regime = 'no_data'
+
+    # === COMPONENT 4: DE-DOLLARIZATION PROXY (25%) ===
+    # Gold strength relative to broad USD strength
+    if not pd.isna(gold_score) and not pd.isna(dxy_score):
+        # Strong gold + Strong DXY = de-dollarization / central bank buying
+        gold_dxy_diff = gold_score - (-dxy_score)  # Expecting inverse relationship
+
+        if gold_dxy_diff > 6:
+            dedollar_score = 8.0
+            dedollar_regime = 'strong_structural_demand'
+        elif gold_dxy_diff > 3:
+            dedollar_score = 4.0
+            dedollar_regime = 'moderate_structural_demand'
+        elif gold_dxy_diff > -3:
+            dedollar_score = 0.0
+            dedollar_regime = 'traditional_dynamics'
+        else:
+            dedollar_score = -4.0
+            dedollar_regime = 'structural_weakness'
+    else:
+        dedollar_score = 0
+        dedollar_regime = 'no_data'
+
+    # === COMPOSITE GOLD REGIME SCORE ===
+    component_scores = [etf_flow_score, breakdown_score, safe_haven_score, dedollar_score]
+    valid_scores = [s for s in component_scores if s != 0 or True]  # Include all
+    gold_regime_score = np.mean(valid_scores) if valid_scores else 0
+
+    # Determine overall regime
+    if breakdown_regime == 'structural_demand' or dedollar_regime == 'strong_structural_demand':
+        gold_regime = 'structural'
+        framework_confidence = 0.3
+    elif breakdown_regime == 'structural_weakness':
+        gold_regime = 'structural_weakness'
+        framework_confidence = 0.5
+    elif etf_flow_regime in ['strong_inflow', 'moderate_inflow'] and gold_regime_score > 3:
+        gold_regime = 'transitional'
+        framework_confidence = 0.6
+    else:
+        gold_regime = 'traditional'
+        framework_confidence = 1.0
+
+    # Generate recommendation
+    if gold_regime == 'structural' and gold_regime_score > 3:
+        recommendation = {
+            'action': 'override_macro_bearish',
+            'description': 'Structural demand strong - override bearish macro signals',
+            'signal_adjustment': min(gold_regime_score * 0.5, 3),
+        }
+    elif gold_regime == 'structural_weakness' and gold_regime_score < -3:
+        recommendation = {
+            'action': 'confirm_weakness',
+            'description': 'Structural indicators confirm weakness',
+            'signal_adjustment': max(gold_regime_score * 0.3, -2),
+        }
+    else:
+        recommendation = {
+            'action': 'standard_framework',
+            'description': 'Use standard macro quadrant framework',
+            'signal_adjustment': 0,
+        }
+
+    result = {
+        'gold_regime_score': round(gold_regime_score, 2),
+        'gold_regime': gold_regime,
+        'framework_confidence': framework_confidence,
+        'recommendation': recommendation,
+        'component_scores': {
+            'etf_flow': {'score': round(etf_flow_score, 2), 'regime': etf_flow_regime},
+            'correlation_breakdown': {'score': round(breakdown_score, 2), 'regime': breakdown_regime},
+            'safe_haven': {'score': round(safe_haven_score, 2), 'regime': safe_haven_regime},
+            'dedollarization': {'score': round(dedollar_score, 2), 'regime': dedollar_regime},
+        },
+        'inputs': {
+            'gold_score': round(gold_score, 2) if not pd.isna(gold_score) else None,
+            'dxy_score': round(dxy_score, 2) if not pd.isna(dxy_score) else None,
+            'treasury_score': round(treasury_score, 2) if not pd.isna(treasury_score) else None,
+        }
+    }
+
+    # Print analysis
+    print("\n" + "="*140)
+    print(f"{'GOLD-SPECIFIC REGIME ANALYSIS':^140}")
+    print("="*140 + "\n")
+
+    print(f"Gold Regime: {gold_regime.upper()}")
+    print(f"Regime Score: {gold_regime_score:+.2f}")
+    print(f"Framework Confidence: {framework_confidence:.0%}")
+    print(f"\nRecommendation: {recommendation['action']}")
+    print(f"Description: {recommendation['description']}")
+
+    print(f"\nComponent Breakdown:")
+    print(f"  ETF Flow Proxy:        {etf_flow_score:+.2f}  ({etf_flow_regime})")
+    print(f"  Correlation Breakdown: {breakdown_score:+.2f}  ({breakdown_regime})")
+    print(f"  Safe Haven Index:      {safe_haven_score:+.2f}  ({safe_haven_regime})")
+    print(f"  De-Dollarization:      {dedollar_score:+.2f}  ({dedollar_regime})")
+
+    print(f"\nInput Scores:")
+    print(f"  Gold (GCA):    {gold_score:+.2f}" if not pd.isna(gold_score) else "  Gold: N/A")
+    print(f"  DXY Index:     {dxy_score:+.2f}" if not pd.isna(dxy_score) else "  DXY: N/A")
+    print(f"  10Y Treasury:  {treasury_score:+.2f}" if not pd.isna(treasury_score) else "  10Y Treasury: N/A")
+
+    print("\n" + "="*140)
+
+    return result
+
+
+# ============================================================================
+# REPORT GENERATION (PDF / IMAGE)
+# ============================================================================
+
+def generate_report(results_by_category, macro_analysis, gold_regime=None, output_path=None, format='pdf'):
+    """
+    Generate a professional PDF or image report for circulation.
+
+    Args:
+        results_by_category: Dict of category -> results list
+        macro_analysis: Dict from analyze_macro_quadrant()
+        gold_regime: Dict from analyze_gold_regime() (optional)
+        output_path: Output file path (default: auto-generated with timestamp)
+        format: 'pdf' or 'png'
+
+    Returns:
+        Path to generated file
+    """
+    # Set up the figure
+    fig = plt.figure(figsize=(16, 22))
+    fig.patch.set_facecolor('white')
+
+    # Title
+    fig.suptitle('Carnival Core Score (CCS) - Market Analysis Report',
+                 fontsize=20, fontweight='bold', y=0.98)
+
+    # Timestamp
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    fig.text(0.5, 0.955, f'Generated: {timestamp}', ha='center', fontsize=10, style='italic')
+
+    # Create grid for subplots
+    gs = fig.add_gridspec(5, 2, hspace=0.4, wspace=0.3,
+                          left=0.05, right=0.95, top=0.93, bottom=0.02)
+
+    # === SECTION 1: MACRO QUADRANT (Top Left) ===
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.axis('off')
+
+    quadrant_colors = {1: '#2ECC71', 2: '#F39C12', 3: '#E74C3C', 4: '#3498DB'}
+    quad_num = macro_analysis.get('quadrant_num', 1)
+    quad_color = quadrant_colors.get(quad_num, '#95A5A6')
+
+    ax1.add_patch(mpatches.FancyBboxPatch((0.05, 0.3), 0.9, 0.6,
+                                           boxstyle="round,pad=0.02",
+                                           facecolor=quad_color, alpha=0.3,
+                                           edgecolor=quad_color, linewidth=2))
+
+    ax1.text(0.5, 0.75, 'MACRO ENVIRONMENT', ha='center', va='center',
+             fontsize=14, fontweight='bold')
+    ax1.text(0.5, 0.55, macro_analysis.get('quadrant', 'Unknown'),
+             ha='center', va='center', fontsize=12, fontweight='bold', color=quad_color)
+    ax1.text(0.5, 0.4, macro_analysis.get('description', ''),
+             ha='center', va='center', fontsize=10)
+
+    growth_txt = f"Growth: {macro_analysis.get('growth_signal', 0):+.2f} ({'↑' if macro_analysis.get('growth_rising') else '↓'})"
+    inflation_txt = f"Inflation: {macro_analysis.get('inflation_signal', 0):+.2f} ({'↑' if macro_analysis.get('inflation_rising') else '↓'})"
+    ax1.text(0.25, 0.15, growth_txt, ha='center', va='center', fontsize=10)
+    ax1.text(0.75, 0.15, inflation_txt, ha='center', va='center', fontsize=10)
+
+    ax1.set_xlim(0, 1)
+    ax1.set_ylim(0, 1)
+    ax1.set_title('Macro Quadrant Analysis', fontsize=12, fontweight='bold', pad=10)
+
+    # === SECTION 2: GOLD REGIME (Top Right) ===
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.axis('off')
+
+    if gold_regime:
+        regime_colors = {
+            'structural': '#FFD700',
+            'transitional': '#FFA500',
+            'traditional': '#C0C0C0',
+            'structural_weakness': '#CD5C5C'
+        }
+        g_regime = gold_regime.get('gold_regime', 'traditional')
+        g_color = regime_colors.get(g_regime, '#C0C0C0')
+
+        ax2.add_patch(mpatches.FancyBboxPatch((0.05, 0.3), 0.9, 0.6,
+                                               boxstyle="round,pad=0.02",
+                                               facecolor=g_color, alpha=0.3,
+                                               edgecolor=g_color, linewidth=2))
+
+        ax2.text(0.5, 0.75, 'GOLD REGIME', ha='center', va='center',
+                 fontsize=14, fontweight='bold')
+        ax2.text(0.5, 0.55, g_regime.upper().replace('_', ' '),
+                 ha='center', va='center', fontsize=12, fontweight='bold', color='#8B4513')
+
+        score_txt = f"Regime Score: {gold_regime.get('gold_regime_score', 0):+.2f}"
+        conf_txt = f"Framework Confidence: {gold_regime.get('framework_confidence', 1.0):.0%}"
+        ax2.text(0.5, 0.4, score_txt, ha='center', va='center', fontsize=10)
+        ax2.text(0.5, 0.25, conf_txt, ha='center', va='center', fontsize=10)
+
+        rec = gold_regime.get('recommendation', {})
+        ax2.text(0.5, 0.1, rec.get('action', '').replace('_', ' ').title(),
+                 ha='center', va='center', fontsize=9, style='italic')
+    else:
+        ax2.text(0.5, 0.5, 'Gold Regime Analysis\nNot Available',
+                 ha='center', va='center', fontsize=12)
+
+    ax2.set_xlim(0, 1)
+    ax2.set_ylim(0, 1)
+    ax2.set_title('Gold-Specific Regime', fontsize=12, fontweight='bold', pad=10)
+
+    # === SECTION 3: STRATEGY RECOMMENDATIONS ===
+    ax3 = fig.add_subplot(gs[1, :])
+    ax3.axis('off')
+
+    strategy_text = f"""
+STRATEGY RECOMMENDATIONS
+
+Outperformers: {macro_analysis.get('outperformers', 'N/A')}
+Underperformers: {macro_analysis.get('underperformers', 'N/A')}
+
+Strategy: {macro_analysis.get('strategy', 'N/A')}
+"""
+    ax3.text(0.02, 0.9, strategy_text, transform=ax3.transAxes, fontsize=11,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.3))
+
+    # === SECTION 4-7: SCORE TABLES BY CATEGORY ===
+    categories = list(results_by_category.keys())
+    for idx, category in enumerate(categories[:4]):  # Max 4 categories
+        row = 2 + idx // 2
+        col = idx % 2
+        ax = fig.add_subplot(gs[row, col])
+
+        results = results_by_category[category]
+        if not results:
+            ax.text(0.5, 0.5, 'No Data', ha='center', va='center')
+            ax.set_title(category, fontsize=11, fontweight='bold')
+            ax.axis('off')
+            continue
+
+        # Sort by score
+        results_sorted = sorted(results,
+                               key=lambda x: x['current_score'] if not pd.isna(x['current_score']) else -999,
+                               reverse=True)[:10]  # Top 10
+
+        # Create table data
+        table_data = []
+        colors = []
+        for r in results_sorted:
+            ticker = get_display_name(r['ticker'])
+            score = r['current_score']
+            avg_5d = r['avg_5d']
+
+            if pd.isna(score):
+                score_str = 'N/A'
+                row_color = 'white'
+            else:
+                score_str = f'{score:+.1f}'
+                if score >= 4:
+                    row_color = '#90EE90'  # Light green
+                elif score <= -4:
+                    row_color = '#FFB6C1'  # Light red
+                else:
+                    row_color = 'white'
+
+            avg_str = f'{avg_5d:+.1f}' if not pd.isna(avg_5d) else 'N/A'
+            sentiment, _ = classify_sentiment(score)
+
+            table_data.append([ticker, score_str, avg_str, sentiment[:15]])
+            colors.append([row_color] * 4)
+
+        if table_data:
+            table = ax.table(cellText=table_data,
+                            colLabels=['Ticker', 'Score', '5D Avg', 'Sentiment'],
+                            cellColours=colors,
+                            loc='center',
+                            cellLoc='center')
+            table.auto_set_font_size(False)
+            table.set_fontsize(8)
+            table.scale(1.2, 1.5)
+
+            # Style header
+            for j in range(4):
+                table[(0, j)].set_facecolor('#4A90D9')
+                table[(0, j)].set_text_props(color='white', fontweight='bold')
+
+        ax.set_title(category, fontsize=11, fontweight='bold')
+        ax.axis('off')
+
+    # === FOOTER ===
+    fig.text(0.5, 0.01, 'Carnival Core Score (CCS) - Bloomberg Edition | Confidential',
+             ha='center', fontsize=8, style='italic', color='gray')
+
+    # Generate output path if not provided
+    if output_path is None:
+        timestamp_file = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f'CCS_Report_{timestamp_file}.{format}'
+
+    # Save figure
+    if format.lower() == 'pdf':
+        with PdfPages(output_path) as pdf:
+            pdf.savefig(fig, bbox_inches='tight', dpi=150)
+    else:
+        plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+
+    plt.close(fig)
+
+    print(f"\n{'='*80}")
+    print(f"Report generated: {output_path}")
+    print(f"{'='*80}\n")
+
+    return output_path
+
+
+def generate_gold_regime_chart(gold_regime, output_path=None):
+    """
+    Generate a focused gold regime analysis chart.
+
+    Args:
+        gold_regime: Dict from analyze_gold_regime()
+        output_path: Output file path
+
+    Returns:
+        Path to generated file
+    """
+    if gold_regime is None:
+        print("No gold regime data available")
+        return None
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig.suptitle('Gold-Specific Regime Analysis', fontsize=16, fontweight='bold')
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    fig.text(0.5, 0.95, f'Generated: {timestamp}', ha='center', fontsize=10, style='italic')
+
+    components = gold_regime.get('component_scores', {})
+
+    # Component scores bar chart
+    ax1 = axes[0, 0]
+    comp_names = ['ETF Flow', 'Corr. Breakdown', 'Safe Haven', 'De-Dollar']
+    comp_scores = [
+        components.get('etf_flow', {}).get('score', 0),
+        components.get('correlation_breakdown', {}).get('score', 0),
+        components.get('safe_haven', {}).get('score', 0),
+        components.get('dedollarization', {}).get('score', 0),
+    ]
+    colors = ['#2ECC71' if s > 0 else '#E74C3C' for s in comp_scores]
+
+    bars = ax1.barh(comp_names, comp_scores, color=colors, alpha=0.7)
+    ax1.axvline(x=0, color='black', linewidth=0.5)
+    ax1.set_xlim(-10, 10)
+    ax1.set_xlabel('Score')
+    ax1.set_title('Component Scores', fontweight='bold')
+
+    for bar, score in zip(bars, comp_scores):
+        ax1.text(score + 0.3 if score >= 0 else score - 0.3,
+                 bar.get_y() + bar.get_height()/2,
+                 f'{score:+.1f}', va='center', fontsize=9)
+
+    # Regime indicator
+    ax2 = axes[0, 1]
+    ax2.axis('off')
+
+    regime = gold_regime.get('gold_regime', 'unknown')
+    regime_score = gold_regime.get('gold_regime_score', 0)
+    confidence = gold_regime.get('framework_confidence', 1.0)
+
+    regime_colors = {
+        'structural': '#FFD700',
+        'transitional': '#FFA500',
+        'traditional': '#C0C0C0',
+        'structural_weakness': '#CD5C5C'
+    }
+    color = regime_colors.get(regime, '#808080')
+
+    circle = plt.Circle((0.5, 0.6), 0.3, color=color, alpha=0.5)
+    ax2.add_patch(circle)
+    ax2.text(0.5, 0.6, regime.upper().replace('_', '\n'),
+             ha='center', va='center', fontsize=14, fontweight='bold')
+    ax2.text(0.5, 0.2, f'Score: {regime_score:+.2f}\nConfidence: {confidence:.0%}',
+             ha='center', va='center', fontsize=11)
+    ax2.set_xlim(0, 1)
+    ax2.set_ylim(0, 1)
+    ax2.set_title('Current Regime', fontweight='bold')
+
+    # Input values
+    ax3 = axes[1, 0]
+    ax3.axis('off')
+
+    inputs = gold_regime.get('inputs', {})
+    input_text = f"""
+INPUT SCORES
+
+Gold (GCA):      {inputs.get('gold_score', 'N/A')}
+DXY Index:       {inputs.get('dxy_score', 'N/A')}
+10Y Treasury:    {inputs.get('treasury_score', 'N/A')}
+"""
+    ax3.text(0.1, 0.8, input_text, transform=ax3.transAxes, fontsize=12,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.5))
+    ax3.set_title('Market Inputs', fontweight='bold')
+
+    # Recommendation
+    ax4 = axes[1, 1]
+    ax4.axis('off')
+
+    rec = gold_regime.get('recommendation', {})
+    rec_text = f"""
+RECOMMENDATION
+
+Action: {rec.get('action', 'N/A').replace('_', ' ').title()}
+
+{rec.get('description', '')}
+
+Signal Adjustment: {rec.get('signal_adjustment', 0):+.2f}
+"""
+    rec_color = '#90EE90' if rec.get('signal_adjustment', 0) > 0 else '#FFB6C1' if rec.get('signal_adjustment', 0) < 0 else 'lightgray'
+    ax4.text(0.1, 0.8, rec_text, transform=ax4.transAxes, fontsize=11,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor=rec_color, alpha=0.3))
+    ax4.set_title('Action Recommendation', fontweight='bold')
+
+    plt.tight_layout(rect=[0, 0.02, 1, 0.93])
+
+    # Save
+    if output_path is None:
+        timestamp_file = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f'Gold_Regime_{timestamp_file}.png'
+
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    plt.close(fig)
+
+    print(f"Gold regime chart saved: {output_path}")
+    return output_path
+
+
+# ============================================================================
 # MAIN SCANNER
 # ============================================================================
 
-def run_ccs_scan():
-    """Execute full CCS scan across all instruments"""
+def run_ccs_scan(generate_pdf=False, generate_png=False, output_dir=None):
+    """
+    Execute full CCS scan across all instruments.
+
+    Args:
+        generate_pdf: If True, generate a PDF report
+        generate_png: If True, generate a PNG image report
+        output_dir: Directory for output files (default: current directory)
+
+    Returns:
+        Dictionary with results, macro analysis, gold regime, and report paths
+    """
 
     print("\n" + "="*80)
     print("Carnival Core Score (CCS) Scanner - Bloomberg Edition")
@@ -855,11 +1437,55 @@ def run_ccs_scan():
     print_results(results_by_category)
 
     # Macro quadrant analysis
-    analyze_macro_quadrant(results_by_category)
+    macro_analysis = analyze_macro_quadrant(results_by_category)
+
+    # Gold-specific regime analysis
+    gold_regime = analyze_gold_regime(results_by_category)
+
+    # Generate reports if requested
+    report_paths = {}
+
+    if generate_pdf or generate_png:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        # Determine output directory
+        if output_dir is None:
+            output_dir = os.getcwd()
+        else:
+            os.makedirs(output_dir, exist_ok=True)
+
+        if generate_pdf:
+            pdf_path = os.path.join(output_dir, f'CCS_Report_{timestamp}.pdf')
+            report_paths['pdf'] = generate_report(
+                results_by_category, macro_analysis, gold_regime,
+                output_path=pdf_path, format='pdf'
+            )
+
+        if generate_png:
+            png_path = os.path.join(output_dir, f'CCS_Report_{timestamp}.png')
+            report_paths['png'] = generate_report(
+                results_by_category, macro_analysis, gold_regime,
+                output_path=png_path, format='png'
+            )
+
+            # Also generate focused gold regime chart
+            gold_chart_path = os.path.join(output_dir, f'Gold_Regime_{timestamp}.png')
+            report_paths['gold_chart'] = generate_gold_regime_chart(
+                gold_regime, output_path=gold_chart_path
+            )
 
     print("\n" + "="*80)
     print(f"Scan complete! Processed {sum(len(r) for r in results_by_category.values())} instruments")
+    if report_paths:
+        print(f"Reports generated: {', '.join(report_paths.keys())}")
     print("="*80 + "\n")
+
+    return {
+        'results_by_category': results_by_category,
+        'macro_analysis': macro_analysis,
+        'gold_regime': gold_regime,
+        'report_paths': report_paths,
+    }
 
 
 # ============================================================================
@@ -867,4 +1493,31 @@ def run_ccs_scan():
 # ============================================================================
 
 if __name__ == "__main__":
-    run_ccs_scan()
+    import sys
+
+    # Parse command line arguments
+    generate_pdf = '--pdf' in sys.argv or '-p' in sys.argv
+    generate_png = '--png' in sys.argv or '-i' in sys.argv
+    generate_both = '--report' in sys.argv or '-r' in sys.argv
+
+    if generate_both:
+        generate_pdf = True
+        generate_png = True
+
+    # Check for output directory argument
+    output_dir = None
+    for i, arg in enumerate(sys.argv):
+        if arg in ['--output', '-o'] and i + 1 < len(sys.argv):
+            output_dir = sys.argv[i + 1]
+
+    # Run scanner
+    results = run_ccs_scan(
+        generate_pdf=generate_pdf,
+        generate_png=generate_png,
+        output_dir=output_dir
+    )
+
+    # Print usage hint if no reports requested
+    if not (generate_pdf or generate_png):
+        print("Tip: Run with --pdf, --png, or --report (-r) to generate reports")
+        print("     Use --output (-o) <dir> to specify output directory")
