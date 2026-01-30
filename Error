@@ -23,12 +23,19 @@ import matplotlib.dates as mdates
 from matplotlib.gridspec import GridSpec
 import seaborn as sns
 import warnings
+import sys
+import os
 warnings.filterwarnings('ignore')
+
+# Add bloomberg_version to path for commodity_signals module
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bloomberg_version'))
+
 %run commodity_signals.ipynb
 
 # Import from existing modules
 try:
     CommoditySignalGenerator  # Check if already in namespace
+    calculate_sentiment_score  # Also check for this function
 except NameError:
     from commodity_signals import (
     CommoditySignalGenerator,
@@ -36,6 +43,7 @@ except NameError:
     SIGNAL_THRESHOLDS,
     fetch_historical_data,
     calculate_technical_indicators,
+    calculate_sentiment_score,
     )
 
 # ============================================================================
@@ -437,6 +445,16 @@ class CommodityBacktest:
         trading_dates = price_data[first_ticker]['Date'].unique()
         trading_dates = sorted([datetime.strptime(str(d)[:10], '%Y-%m-%d') for d in trading_dates])
 
+        # Check if we have enough trading dates
+        if len(trading_dates) == 0:
+            print("Error: No trading dates available for the specified period")
+            return {}
+
+        # Need at least 21 days (20 for warm-up + 1 for trading)
+        if len(trading_dates) < 21:
+            print(f"Warning: Only {len(trading_dates)} trading dates available, need at least 21")
+            return {}
+
         prev_equity = self.initial_capital
         peak_equity = self.initial_capital
 
@@ -456,7 +474,6 @@ class CommodityBacktest:
 
                     if len(historical_df) >= 20:
                         # Calculate signal based on latest data
-                        from commodity_signals import calculate_sentiment_score
                         signal = calculate_sentiment_score(historical_df.iloc[-1])
                         current_signals[ticker] = signal
 
