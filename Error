@@ -1,0 +1,49 @@
+---------------------------------------------------------------------------
+ModuleNotFoundError                       Traceback (most recent call last)
+Input In [3], in <cell line: 1505>()
+   1514 start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+   1516 print(f"\nRunning backtest from {start_date} to {end_date}")
+-> 1518 result = engine.run_backtest(
+   1519     start_date=start_date,
+   1520     end_date=end_date,
+   1521     commodities=['GCA Comdty', 'SIA Comdty', 'CLA Comdty']  # Gold, Silver, Oil
+   1522 )
+   1524 # Print report
+   1525 print_backtest_report(result)
+
+Input In [3], in CommodityBacktest.run_backtest(self, start_date, end_date, commodities, signal_generator)
+    454 historical_df = df[df['Date'] <= current_date.strftime('%Y-%m-%d')]
+    456 if len(historical_df) >= 20:
+    457     # Calculate signal based on latest data
+--> 458     from commodity_signals import calculate_sentiment_score
+    459     signal = calculate_sentiment_score(historical_df.iloc[-1])
+    460     current_signals[ticker] = signal
+
+File /opt/bqplatform/lib/python3.9/site-packages/bqimports/bq_importer.py:104, in BQImporter.import_override(self, name, globals, locals, fromlist, level)
+     65 """Replace the built-in `__import__` function.
+     66 
+     67 Parameters
+   (...)
+     98 in the `_import_error_exception_handler` method in utils.py.
+     99 """
+    100 # Call the original __import__ function
+    101 # import = find + load
+    102 # This is necessary to call outside of try block to handle ImportError
+    103 # of relative imports in __init__.py files of some packages
+--> 104 result = self._original_import(
+    105     name,
+    106     globals,
+    107     locals,
+    108     fromlist,
+    109     level,
+    110 )
+    112 # Attempt to log the module's payload without showing errors
+    113 # to the user
+    114 try:
+    115     # Store the name of module and the import result as tuple
+    116     # For example:
+    117     # import yaml
+    118     #     ==> success: ("yaml", 1)
+    119     #     ==> failure: ("yaml", 0)
+
+ModuleNotFoundError: No module named 'commodity_signals'
