@@ -4,10 +4,11 @@ Commodity Trading Signal Generator
 Generates buy/sell signals for Gold, Silver, Platinum, Palladium, and Oil
 
 Signal Components:
-- Sentiment Score (CCS): 40% - Existing momentum/trend analysis
-- Correlation Alignment: 25% - Cross-asset confirmation
-- Divergence Detection: 20% - Mean-reversion opportunities
-- Regime Adjustment: 15% - Macro context
+- Sentiment Score (CCS): 35% - Momentum/trend analysis
+- Correlation Alignment: 22% - Cross-asset confirmation
+- Divergence Detection: 18% - Mean-reversion opportunities
+- Options Flow: 12% - Call/Put ratio, IV analysis
+- Regime Adjustment: 13% - Macro context
 
 Signal Range: -10 (Very Bearish) to +10 (Very Bullish)
 """
@@ -42,12 +43,13 @@ from correlation_analysis import (
 # CONFIGURATION
 # ============================================================================
 
-# Signal component weights
+# Signal component weights (updated to include options flow)
 SIGNAL_WEIGHTS = {
-    'sentiment': 0.40,       # CCS momentum/trend score
-    'correlation': 0.25,     # Cross-asset alignment
-    'divergence': 0.20,      # Divergence detection
-    'regime': 0.15,          # Macro regime adjustment
+    'sentiment': 0.35,       # CCS momentum/trend score (was 40%)
+    'correlation': 0.22,     # Cross-asset alignment (was 25%)
+    'divergence': 0.18,      # Divergence detection (was 20%)
+    'regime': 0.13,          # Macro regime adjustment (was 15%)
+    'options': 0.12,         # Options flow signal (NEW)
 }
 
 # Signal thresholds
@@ -186,6 +188,241 @@ def classify_signal(score: float) -> Tuple[str, str]:
         return 'Bearish', 'Sell / Hold Short'
     else:
         return 'Very Bearish', 'Strong Sell / Add to Short'
+
+
+# ============================================================================
+# OPTIONS DATA FETCHING & SCORING
+# ============================================================================
+
+# Initialize BQL service
+bq = bql.Service()
+
+
+def is_futures_instrument(ticker: str) -> bool:
+    """Check if instrument is futures/commodities"""
+    return 'Comdty' in ticker or ('Index' in ticker and 'VIX' not in ticker)
+
+
+def is_equity_instrument(ticker: str) -> bool:
+    """Check if instrument is equity (stock/ETF)"""
+    return 'Equity' in ticker
+
+
+def fetch_options_data(ticker: str) -> Optional[Dict]:
+    """
+    Fetch options flow data using BQL.
+
+    Returns dict with:
+    - implied_volatility: Current IV
+    - call_put_ratio: Call IV / Put IV (>1 = bullish, <1 = bearish)
+    - iv_percentile: IV rank vs historical (for mean-reversion)
+    - put_call_skew: Put IV - Call IV (positive = fear premium)
+
+    For commodities, uses futures options data.
+    For equities/ETFs, uses 60-day IV data.
+    """
+    # Only fetch for instruments that have options
+    if not (is_equity_instrument(ticker) or is_futures_instrument(ticker)):
+        return None
+
+    try:
+        is_futures = is_futures_instrument(ticker)
+
+        if is_futures:
+            # Futures use different IV fields
+            request = bql.Request(
+                ticker,
+                {
+                    'Implied_Volatility': bq.data.IMPLIED_VOLATILITY(),
+                    'Fut_Call_IV': bq.data.FUT_CALL_IMPLIED_VOLATILITY(),
+                    'Fut_Put_IV': bq.data.FUT_PUT_IMPLIED_VOLATILITY(),
+                    'IV_30D_High': bq.data.IMPLIED_VOLATILITY_30D_HIGH(),
+                    'IV_30D_Low': bq.data.IMPLIED_VOLATILITY_30D_LOW(),
+                }
+            )
+        else:
+            # Equities use 60-day call/put IV
+            request = bql.Request(
+                ticker,
+                {
+                    'Implied_Volatility': bq.data.IMPLIED_VOLATILITY(),
+                    'Call_IV_60D': bq.data.CALL_IMP_VOL_60D(),
+                    'Put_IV_60D': bq.data.PUT_IMP_VOL_60D(),
+                    'IV_30D_High': bq.data.IMPLIED_VOLATILITY_30D_HIGH(),
+                    'IV_30D_Low': bq.data.IMPLIED_VOLATILITY_30D_LOW(),
+                }
+            )
+
+        response = bq.execute(request)
+        data = pd.concat([data_item.df() for data_item in response], axis=1)
+
+        # Extract implied volatility
+        implied_vol = data['Implied_Volatility'].iloc[-1] if 'Implied_Volatility' in data.columns else None
+
+        # Calculate call/put ratio
+        if is_futures:
+            call_iv = data['Fut_Call_IV'].iloc[-1] if 'Fut_Call_IV' in data.columns else None
+            put_iv = data['Fut_Put_IV'].iloc[-1] if 'Fut_Put_IV' in data.columns else None
+        else:
+            call_iv = data['Call_IV_60D'].iloc[-1] if 'Call_IV_60D' in data.columns else None
+            put_iv = data['Put_IV_60D'].iloc[-1] if 'Put_IV_60D' in data.columns else None
+
+        # Call/Put ratio
+        if call_iv and put_iv and put_iv > 0:
+            call_put_ratio = call_iv / put_iv
+            put_call_skew = put_iv - call_iv  # Positive = fear premium
+        else:
+            call_put_ratio = 1.0
+            put_call_skew = 0.0
+
+        # IV percentile (where current IV sits in 30-day range)
+        iv_high = data['IV_30D_High'].iloc[-1] if 'IV_30D_High' in data.columns else None
+        iv_low = data['IV_30D_Low'].iloc[-1] if 'IV_30D_Low' in data.columns else None
+
+        if iv_high and iv_low and implied_vol and (iv_high - iv_low) > 0:
+            iv_percentile = (implied_vol - iv_low) / (iv_high - iv_low) * 100
+        else:
+            iv_percentile = 50.0  # Default to middle
+
+        return {
+            'implied_volatility': implied_vol if implied_vol else 25.0,
+            'call_put_ratio': call_put_ratio,
+            'put_call_skew': put_call_skew,
+            'iv_percentile': iv_percentile,
+            'call_iv': call_iv,
+            'put_iv': put_iv,
+            'data_available': True,
+        }
+
+    except Exception as e:
+        print(f"Warning: Could not fetch options data for {ticker}: {e}")
+        return None
+
+
+def calculate_options_flow_score(
+    options_data: Optional[Dict],
+    price_trend: float,
+    commodity_type: str = 'precious_metal'
+) -> Dict:
+    """
+    Calculate options flow score for signal generation.
+
+    Components:
+    1. Call/Put Ratio (40%): Directional bias from options market
+    2. IV Level (25%): High IV in uptrend = momentum, in downtrend = capitulation
+    3. Put/Call Skew (20%): Fear premium in puts
+    4. IV Percentile (15%): Mean-reversion signal
+
+    Args:
+        options_data: Dict from fetch_options_data()
+        price_trend: Recent price trend (e.g., 10-day ROC)
+        commodity_type: Type of commodity for context-specific scoring
+
+    Returns:
+        Dict with score and component breakdown
+    """
+    if options_data is None or not options_data.get('data_available', False):
+        return {
+            'score': 0.0,
+            'components': {},
+            'data_available': False,
+        }
+
+    # === CALL/PUT RATIO (40%) ===
+    # Higher ratio = more call buying = bullish
+    cp_ratio = options_data.get('call_put_ratio', 1.0)
+
+    if cp_ratio > 1.5:
+        cp_score = 10  # Very bullish (extreme call buying)
+    elif cp_ratio > 1.2:
+        cp_score = 5   # Bullish
+    elif cp_ratio > 0.8:
+        cp_score = 0   # Neutral
+    elif cp_ratio > 0.6:
+        cp_score = -5  # Bearish
+    else:
+        cp_score = -10  # Very bearish (extreme put buying)
+
+    cp_weighted = normalize_to_range(cp_score) * 0.40
+
+    # === IV LEVEL (25%) ===
+    # Context-dependent: High IV in uptrend = conviction, in downtrend = panic
+    implied_vol = options_data.get('implied_volatility', 25.0)
+
+    # Commodity-specific IV thresholds
+    iv_thresholds = {
+        'precious_metal': {'low': 12, 'normal': 18, 'high': 28, 'extreme': 40},
+        'energy': {'low': 20, 'normal': 35, 'high': 50, 'extreme': 70},
+        'industrial_metal': {'low': 15, 'normal': 25, 'high': 40, 'extreme': 55},
+        'agricultural': {'low': 15, 'normal': 25, 'high': 38, 'extreme': 50},
+    }
+
+    thresholds = iv_thresholds.get(commodity_type, iv_thresholds['precious_metal'])
+
+    # Determine IV regime
+    if implied_vol <= thresholds['low']:
+        iv_regime = 'low'
+        iv_base = -3  # Low IV = complacency, potential for vol expansion
+    elif implied_vol <= thresholds['normal']:
+        iv_regime = 'normal'
+        iv_base = 0
+    elif implied_vol <= thresholds['high']:
+        iv_regime = 'high'
+        iv_base = 2 if price_trend > 0 else -2
+    else:
+        iv_regime = 'extreme'
+        # Extreme IV: bullish in uptrend (conviction), potential reversal in downtrend
+        iv_base = 5 if price_trend > 0 else 3  # Capitulation can signal bottom
+
+    iv_weighted = normalize_to_range(iv_base) * 0.25
+
+    # === PUT/CALL SKEW (20%) ===
+    # Positive skew = fear premium in puts
+    skew = options_data.get('put_call_skew', 0.0)
+
+    if skew > 5:
+        skew_score = -5  # High fear premium = bearish near-term
+    elif skew > 2:
+        skew_score = -2
+    elif skew > -2:
+        skew_score = 0  # Balanced
+    elif skew > -5:
+        skew_score = 2  # Call premium = bullish sentiment
+    else:
+        skew_score = 5  # Extreme call premium
+
+    skew_weighted = normalize_to_range(skew_score) * 0.20
+
+    # === IV PERCENTILE (15%) ===
+    # Mean-reversion signal: extreme low = vol expansion likely, extreme high = contraction
+    iv_pct = options_data.get('iv_percentile', 50.0)
+
+    if iv_pct <= 10:
+        pct_score = 3 if price_trend > 0 else -2  # Low IV, uptrend = breakout potential
+    elif iv_pct <= 30:
+        pct_score = 1
+    elif iv_pct >= 90:
+        pct_score = -3 if price_trend < 0 else 2  # High IV exhaustion
+    elif iv_pct >= 70:
+        pct_score = -1
+    else:
+        pct_score = 0
+
+    pct_weighted = normalize_to_range(pct_score) * 0.15
+
+    # === TOTAL OPTIONS SCORE ===
+    total_score = cp_weighted + iv_weighted + skew_weighted + pct_weighted
+
+    return {
+        'score': float(np.clip(total_score, -10, 10)),
+        'components': {
+            'call_put_ratio': {'value': round(cp_ratio, 3), 'score': round(cp_weighted, 2)},
+            'iv_level': {'value': round(implied_vol, 1), 'regime': iv_regime, 'score': round(iv_weighted, 2)},
+            'put_call_skew': {'value': round(skew, 2), 'score': round(skew_weighted, 2)},
+            'iv_percentile': {'value': round(iv_pct, 1), 'score': round(pct_weighted, 2)},
+        },
+        'data_available': True,
+    }
 
 
 # ============================================================================
@@ -1354,7 +1591,12 @@ class CommoditySignalGenerator:
     """
     Generates composite buy/sell signals for commodities.
 
-    Signal = Sentiment (40%) + Correlation (25%) + Divergence (20%) + Regime (15%)
+    Signal Components:
+    - Sentiment (35%): CCS momentum/trend score
+    - Correlation (22%): Cross-asset alignment
+    - Divergence (18%): Mean-reversion opportunities
+    - Regime (13%): Macro regime adjustment
+    - Options (12%): Options flow signals (call/put ratio, IV, skew)
     """
 
     def __init__(self, lookback_days: int = 252):
@@ -1367,6 +1609,7 @@ class CommoditySignalGenerator:
         self.lookback_days = lookback_days
         self.correlation_engine = CorrelationEngine(lookback_days)
         self.price_data_cache = {}
+        self.options_data_cache = {}
 
     def _fetch_all_price_data(self) -> Dict[str, pd.DataFrame]:
         """
@@ -1394,6 +1637,7 @@ class CommoditySignalGenerator:
         all_tickers = list(set(all_tickers))  # Remove duplicates
 
         price_data = {}
+        options_data = {}
 
         for ticker in all_tickers:
             df = fetch_historical_data(ticker, days=self.lookback_days)
@@ -1401,7 +1645,14 @@ class CommoditySignalGenerator:
                 df = calculate_technical_indicators(df)
                 price_data[ticker] = df
 
+                # Fetch options data for commodities and key equities
+                if ticker in COMMODITY_UNIVERSE or is_futures_instrument(ticker):
+                    opts = fetch_options_data(ticker)
+                    if opts is not None:
+                        options_data[ticker] = opts
+
         self.price_data_cache = price_data
+        self.options_data_cache = options_data
         return price_data
 
     def generate_signal(
@@ -1439,11 +1690,11 @@ class CommoditySignalGenerator:
         commodity_info = COMMODITY_UNIVERSE.get(commodity_ticker, {})
         commodity_type = commodity_info.get('type', 'precious_metal')
 
-        # === COMPONENT 1: SENTIMENT SCORE (40%) ===
+        # === COMPONENT 1: SENTIMENT SCORE (35%) ===
         sentiment_score = calculate_sentiment_score(commodity_df.iloc[-1])
         sentiment_weighted = sentiment_score * SIGNAL_WEIGHTS['sentiment']
 
-        # === COMPONENT 2: CORRELATION ALIGNMENT (25%) ===
+        # === COMPONENT 2: CORRELATION ALIGNMENT (22%) ===
         correlation_score = calculate_correlation_alignment_score(
             commodity_ticker,
             self.correlation_engine,
@@ -1451,7 +1702,7 @@ class CommoditySignalGenerator:
         )
         correlation_weighted = correlation_score * SIGNAL_WEIGHTS['correlation']
 
-        # === COMPONENT 3: DIVERGENCE DETECTION (20%) ===
+        # === COMPONENT 3: DIVERGENCE DETECTION (18%) ===
         divergence_result = detect_divergence_signal(
             commodity_ticker,
             self.correlation_engine,
@@ -1460,11 +1711,30 @@ class CommoditySignalGenerator:
         divergence_score = divergence_result['score']
         divergence_weighted = divergence_score * SIGNAL_WEIGHTS['divergence']
 
-        # === COMPONENT 4: REGIME ADJUSTMENT (15%) ===
+        # === COMPONENT 4: OPTIONS FLOW (12%) ===
+        # Get recent price trend for context
+        price_trend = commodity_df['Close'].pct_change(10).iloc[-1] * 100
+
+        # Fetch options data (use cache if available)
+        options_data = self.options_data_cache.get(commodity_ticker)
+        if options_data is None:
+            options_data = fetch_options_data(commodity_ticker)
+            if options_data:
+                self.options_data_cache[commodity_ticker] = options_data
+
+        options_result = calculate_options_flow_score(
+            options_data,
+            price_trend,
+            commodity_type
+        )
+        options_score = options_result['score']
+        options_weighted = options_score * SIGNAL_WEIGHTS['options']
+
+        # === COMPONENT 5: REGIME ADJUSTMENT (13%) ===
         macro_quadrant = detect_macro_quadrant(price_data)
 
-        # Base signal before regime adjustment
-        base_signal = sentiment_weighted + correlation_weighted + divergence_weighted
+        # Base signal before regime adjustment (now includes options)
+        base_signal = sentiment_weighted + correlation_weighted + divergence_weighted + options_weighted
 
         # Apply regime adjustment
         adjusted_signal = apply_regime_adjustment(
@@ -1511,10 +1781,13 @@ class CommoditySignalGenerator:
                 'correlation_weighted': round(correlation_weighted, 2),
                 'divergence': round(divergence_score, 2),
                 'divergence_weighted': round(divergence_weighted, 2),
+                'options': round(options_score, 2),
+                'options_weighted': round(options_weighted, 2),
                 'regime_adjustment': round(regime_contribution, 2),
             },
             'macro_regime': macro_quadrant,
             'divergence_details': divergence_result,
+            'options_details': options_result,
             'commodity_type': commodity_type,
             'timestamp': datetime.now().isoformat(),
         }
@@ -1714,10 +1987,10 @@ class CommoditySignalGenerator:
 
 def print_signal_report(signals: Dict[str, Dict]):
     """Print formatted signal report for all commodities."""
-    print("\n" + "="*100)
-    print(f"{'COMMODITY TRADING SIGNALS':^100}")
-    print(f"{'Sentiment (40%) + Correlation (25%) + Divergence (20%) + Regime (15%)':^100}")
-    print("="*100 + "\n")
+    print("\n" + "="*120)
+    print(f"{'COMMODITY TRADING SIGNALS':^120}")
+    print(f"{'Sentiment (35%) + Correlation (22%) + Divergence (18%) + Options (12%) + Regime (13%)':^120}")
+    print("="*120 + "\n")
 
     # Get macro regime (same for all)
     first_signal = list(signals.values())[0]
@@ -1729,8 +2002,8 @@ def print_signal_report(signals: Dict[str, Dict]):
     print()
 
     # Header
-    print(f"{'Commodity':<15} {'Signal':>8} {'Classification':<15} {'Action':<25} {'Sent':>6} {'Corr':>6} {'Div':>6} {'Reg':>6}")
-    print("-"*100)
+    print(f"{'Commodity':<15} {'Signal':>8} {'Classification':<15} {'Action':<25} {'Sent':>6} {'Corr':>6} {'Div':>6} {'Opts':>6} {'Reg':>6}")
+    print("-"*120)
 
     # Sort by signal (descending)
     sorted_signals = sorted(
@@ -1749,12 +2022,38 @@ def print_signal_report(signals: Dict[str, Dict]):
         sentiment = components.get('sentiment', 0)
         correlation = components.get('correlation', 0)
         divergence = components.get('divergence', 0)
+        options = components.get('options', 0)
         regime_adj = components.get('regime_adjustment', 0)
 
         print(f"{name:<15} {signal:>8.2f} {classification:<15} {action:<25} "
-              f"{sentiment:>6.2f} {correlation:>6.2f} {divergence:>6.2f} {regime_adj:>6.2f}")
+              f"{sentiment:>6.2f} {correlation:>6.2f} {divergence:>6.2f} {options:>6.2f} {regime_adj:>6.2f}")
 
-    print("="*100)
+    print("="*120)
+
+    # Print Options Flow Details for each commodity
+    print(f"\n{'OPTIONS FLOW DETAILS':^120}")
+    print("-"*120)
+    print(f"{'Commodity':<12} {'C/P Ratio':>10} {'IV':>8} {'IV %ile':>8} {'Skew':>8} {'IV Regime':<12} {'Opts Score':>10}")
+    print("-"*120)
+
+    for ticker, data in sorted_signals:
+        name = COMMODITY_UNIVERSE.get(ticker, {}).get('name', ticker)[:11]
+        options_details = data.get('options_details', {})
+
+        if options_details.get('data_available', False):
+            components = options_details.get('components', {})
+            cp_ratio = components.get('call_put_ratio', {}).get('value', 1.0)
+            iv_level = components.get('iv_level', {}).get('value', 0)
+            iv_regime = components.get('iv_level', {}).get('regime', 'N/A')
+            iv_pct = components.get('iv_percentile', {}).get('value', 50)
+            skew = components.get('put_call_skew', {}).get('value', 0)
+            opts_score = options_details.get('score', 0)
+
+            print(f"{name:<12} {cp_ratio:>10.3f} {iv_level:>8.1f} {iv_pct:>8.1f} {skew:>8.2f} {iv_regime:<12} {opts_score:>10.2f}")
+        else:
+            print(f"{name:<12} {'N/A':>10} {'N/A':>8} {'N/A':>8} {'N/A':>8} {'No Data':<12} {'0.00':>10}")
+
+    print("-"*120)
 
     # Print Gold-Specific Regime Info if available
     gold_signal = signals.get('GCA Comdty', {})
@@ -1785,7 +2084,7 @@ def print_signal_report(signals: Dict[str, Dict]):
             for ticker, detail in breakdown.get('breakdown_details', {}).items():
                 print(f"    {ticker}: Current={detail['current']:.2f}, Expected={detail['expected']:.2f}")
 
-        print("-"*100)
+        print("-"*120)
 
     print(f"\nSignal Interpretation:")
     print(f"  >= 7.0: Very Bullish (Strong Buy)")
@@ -1793,7 +2092,13 @@ def print_signal_report(signals: Dict[str, Dict]):
     print(f"  -4.0 to 4.0: Neutral (No Position)")
     print(f"  <= -4.0: Bearish (Sell)")
     print(f"  <= -7.0: Very Bearish (Strong Sell)")
-    print("="*100 + "\n")
+
+    print(f"\nOptions Flow Guide:")
+    print(f"  C/P Ratio > 1.2: Bullish options positioning")
+    print(f"  C/P Ratio < 0.8: Bearish options positioning")
+    print(f"  IV %ile > 80: High volatility (potential reversal)")
+    print(f"  IV %ile < 20: Low volatility (breakout potential)")
+    print("="*120 + "\n")
 
 
 # ============================================================================
