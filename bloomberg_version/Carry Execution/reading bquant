@@ -1,0 +1,257 @@
+BQuant Assistant Beta
+
+21:08
+
+Perfect! For a complex BQuant program with multiple modules, you'll want to set up a proper Python package structure. This will make imports much cleaner and more maintainable.
+
+Recommended Project Structure:
+import os
+
+# Create a proper package structure
+def create_project_structure():
+    """Create a professional Python project structure"""
+    
+    # Define the directory structure
+    directories = [
+        './src',
+        './src/data',
+        './src/models',
+        './src/analysis',
+        './src/utils',
+        './src/visualization',
+        './tests',
+        './config',
+        './notebooks'
+    ]
+    
+    # Create directories
+    for directory in directories:
+        os.makedirs(directory, exist_ok=True)
+        print(f"Created: {directory}")
+    
+    # Create __init__.py files to make them proper Python packages
+    init_files = [
+        './src/__init__.py',
+        './src/data/__init__.py',
+        './src/models/__init__.py',
+        './src/analysis/__init__.py',
+        './src/utils/__init__.py',
+        './src/visualization/__init__.py'
+    ]
+    
+    for init_file in init_files:
+        with open(init_file, 'w') as f:
+            f.write('# Package initialization\n')
+        print(f"Created: {init_file}")
+
+create_project_structure()
+Create Template Files:
+# Create template files with common BQuant patterns
+
+# 1. Data loader module
+data_loader_content = '''
+"""
+Data loading utilities for BQuant
+"""
+import bql
+import pandas as pd
+from typing import List, Dict, Any, Optional
+
+class BQuantDataLoader:
+    def __init__(self):
+        self.bq = bql.Service()
+    
+    def execute_bql(self, query: str) -> pd.DataFrame:
+        """Execute BQL query and return DataFrame"""
+        response = self.bq.execute(query)
+        return response[0].df()
+    
+    def load_equity_data(self, tickers: List[str], fields: List[str], 
+                        start_date: str = None, end_date: str = None) -> pd.DataFrame:
+        """Load equity data for given tickers and fields"""
+        # Your BQL query logic here
+        pass
+    
+    def load_market_data(self, universe: str, fields: List[str]) -> pd.DataFrame:
+        """Load market data for a universe"""
+        # Your BQL query logic here
+        pass
+'''
+
+with open('./src/data/data_loader.py', 'w') as f:
+    f.write(data_loader_content)
+
+# 2. Analysis module
+analysis_content = '''
+"""
+Analysis utilities and functions
+"""
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Tuple
+
+class FinancialAnalysis:
+    def __init__(self):
+        pass
+    
+    def calculate_returns(self, prices: pd.DataFrame) -> pd.DataFrame:
+        """Calculate returns from price data"""
+        return prices.pct_change()
+    
+    def calculate_volatility(self, returns: pd.DataFrame, window: int = 252) -> pd.DataFrame:
+        """Calculate rolling volatility"""
+        return returns.rolling(window).std() * np.sqrt(252)
+    
+    def portfolio_metrics(self, returns: pd.DataFrame, weights: Dict[str, float]) -> Dict:
+        """Calculate portfolio metrics"""
+        # Your portfolio analysis logic
+        pass
+'''
+
+with open('./src/analysis/financial_analysis.py', 'w') as f:
+    f.write(analysis_content)
+
+# 3. Utilities module
+utils_content = '''
+"""
+Utility functions
+"""
+import pandas as pd
+from datetime import datetime, timedelta
+from typing import List, Dict, Any
+
+def format_date(date_str: str) -> str:
+    """Format date for BQL queries"""
+    # Date formatting logic
+    pass
+
+def clean_ticker_list(tickers: List[str]) -> List[str]:
+    """Clean and validate ticker list"""
+    return [ticker.strip().upper() for ticker in tickers if ticker.strip()]
+
+def validate_data(df: pd.DataFrame) -> bool:
+    """Validate data quality"""
+    # Data validation logic
+    pass
+
+class ConfigManager:
+    """Manage configuration settings"""
+    def __init__(self, config_path: str = './config/settings.json'):
+        self.config_path = config_path
+        self.config = self.load_config()
+    
+    def load_config(self) -> Dict:
+        """Load configuration from file"""
+        # Config loading logic
+        return {}
+'''
+
+with open('./src/utils/helpers.py', 'w') as f:
+    f.write(utils_content)
+
+print("Created template modules!")
+Create a Main Configuration File:
+import json
+
+# Create a configuration file
+config = {
+    "data_settings": {
+        "default_universe": "SPX Index",
+        "default_fields": ["PX_LAST", "PX_VOLUME", "MARKET_CAP"],
+        "default_start_date": "2020-01-01",
+        "cache_enabled": True
+    },
+    "analysis_settings": {
+        "volatility_window": 252,
+        "return_frequency": "daily",
+        "benchmark": "SPX Index"
+    },
+    "output_settings": {
+        "save_results": True,
+        "output_format": "csv",
+        "charts_enabled": True
+    }
+}
+
+os.makedirs('./config', exist_ok=True)
+with open('./config/settings.json', 'w') as f:
+    json.dump(config, indent=2, fp=f)
+
+print("Created configuration file!")
+Now You Can Import Cleanly:
+# Add the src directory to Python path for clean imports
+import sys
+import os
+sys.path.append(os.path.abspath('./src'))
+
+# Now you can import your modules cleanly
+from data.data_loader import BQuantDataLoader
+from analysis.financial_analysis import FinancialAnalysis
+from utils.helpers import ConfigManager, clean_ticker_list
+
+# Example usage
+loader = BQuantDataLoader()
+analyzer = FinancialAnalysis()
+config = ConfigManager()
+
+print("Modules imported successfully!")
+print("Available classes:")
+print("- BQuantDataLoader")
+print("- FinancialAnalysis") 
+print("- ConfigManager")
+Create a Main Runner Script:
+# Create a main application file
+main_content = '''
+"""
+Main application entry point
+"""
+import sys
+import os
+sys.path.append(os.path.abspath('./src'))
+
+from data.data_loader import BQuantDataLoader
+from analysis.financial_analysis import FinancialAnalysis
+from utils.helpers import ConfigManager
+
+class BQuantApplication:
+    def __init__(self):
+        self.loader = BQuantDataLoader()
+        self.analyzer = FinancialAnalysis()
+        self.config = ConfigManager()
+    
+    def run_analysis(self, tickers: list, analysis_type: str = "basic"):
+        """Run the main analysis pipeline"""
+        print(f"Running {analysis_type} analysis for {tickers}")
+        
+        # Load data
+        # data = self.loader.load_equity_data(tickers, self.config.config["data_settings"]["default_fields"])
+        
+        # Analyze data
+        # results = self.analyzer.calculate_returns(data)
+        
+        # Return results
+        return "Analysis complete"
+
+if __name__ == "__main__":
+    app = BQuantApplication()
+    # app.run_analysis(["AAPL US Equity", "MSFT US Equity"])
+'''
+
+with open('./main.py', 'w') as f:
+    f.write(main_content)
+
+print("Created main.py - your application entry point!")
+Usage Pattern:
+Now you can work like this:
+
+# In any notebook, just run this once:
+import sys
+import os
+sys.path.append(os.path.abspath('./src'))
+
+# Then import whatever you need:
+from data.data_loader import BQuantDataLoader
+from analysis.financial_analysis import FinancialAnalysis
+
+# Or run your main application:
+exec(open('./main.py').read())
