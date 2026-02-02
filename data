@@ -1,0 +1,38 @@
+No, that code won't work in BQuant (or any Jupyter notebook environment) because __file__ is not defined in Jupyter notebooks.
+
+The __file__ variable only exists when running Python scripts (.py files), but in Jupyter notebooks, there's no equivalent built-in variable.
+
+What happens when you try:
+import os
+print(__file__)  # This will raise a NameError in Jupyter
+Alternatives for BQuant/Jupyter:
+1. Use os.getcwd() for current directory:
+import sys
+import os
+
+# Get current working directory instead of __file__
+current_dir = os.getcwd()
+src_path = os.path.join(current_dir, '..', 'src')
+sys.path.insert(0, src_path)
+2. Use %pwd magic command:
+import sys
+import os
+
+# Get current directory using Jupyter magic
+current_dir = %pwd
+src_path = os.path.join(current_dir, '..', 'src')
+sys.path.insert(0, src_path)
+3. Hardcode the path (if structure is known):
+import sys
+
+# Directly specify the path relative to your notebook location
+sys.path.insert(0, '../src')
+4. Use pathlib for cleaner path handling:
+import sys
+from pathlib import Path
+
+# Get current directory and navigate to src
+current_dir = Path.cwd()
+src_path = current_dir.parent / 'src'
+sys.path.insert(0, str(src_path))
+However, remember that in BQuant you're primarily working with notebooks, so the %run magic command is usually the most effective way to share code between notebooks!
