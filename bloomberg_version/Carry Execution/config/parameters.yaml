@@ -1,0 +1,422 @@
+# =============================================================================
+# Signal & Strategy Parameters Configuration
+# Detailed parameter tuning for all signal components
+# =============================================================================
+
+# =============================================================================
+# TIME-SERIES MOMENTUM PARAMETERS
+# =============================================================================
+
+momentum:
+  # Return calculation
+  return_type: "log"              # log | simple
+
+  # Multi-horizon lookbacks
+  horizons:
+    ultra_short:
+      window: 5
+      weight: 0.10
+      description: "1-week momentum"
+
+    short:
+      window: 20
+      weight: 0.25
+      description: "1-month momentum"
+
+    medium:
+      window: 60
+      weight: 0.35
+      description: "3-month momentum"
+
+    long:
+      window: 252
+      weight: 0.30
+      description: "12-month momentum"
+
+  # Z-score normalization
+  zscore:
+    enabled: true
+    window: 252
+    min_observations: 63         # Minimum obs for valid z-score
+    winsorize_threshold: 3.0     # Cap at +/- 3 std
+    decay_halflife: 21           # EWMA halflife for z-score
+
+  # Volatility adjustment
+  vol_adjustment:
+    enabled: true
+    method: "inverse"            # inverse | target
+    vol_lookback: 63
+    vol_floor: 0.05             # 5% annual vol floor
+    vol_cap: 0.50               # 50% annual vol cap
+
+  # Signal decay
+  decay:
+    enabled: true
+    halflife_days: 5            # Signal decays with 5-day halflife
+    min_weight: 0.25            # Minimum weight before refresh
+
+# =============================================================================
+# FX CARRY PARAMETERS
+# =============================================================================
+
+carry:
+  # Primary tenor for carry calculation
+  primary_tenor: "3M"
+
+  # Fallback tenors if primary unavailable
+  fallback_tenors:
+    - "1M"
+    - "6M"
+    - "1Y"
+
+  # Calculation method
+  method: "forward_points"       # forward_points | rate_differential | combined
+
+  # Forward points calculation
+  forward_points:
+    # Annualization based on tenor
+    annualization:
+      "1M": 12
+      "3M": 4
+      "6M": 2
+      "1Y": 1
+
+    # Point value conversion (for different quote conventions)
+    point_divisor:
+      EURUSD: 10000
+      USDJPY: 100
+      GBPUSD: 10000
+      AUDUSD: 10000
+      USDCNH: 10000
+
+  # Rate differential calculation (alternative method)
+  rate_differential:
+    domestic_curve: "SOFR"
+    interpolation: "linear"      # linear | cubic_spline
+    day_count: "ACT/360"
+
+  # Carry momentum (change in carry over time)
+  carry_momentum:
+    enabled: true
+    lookback: 20
+    weight: 0.30                # Blend weight vs level carry
+
+  # Signal processing
+  signal:
+    zscore_window: 252
+    zscore_threshold: 2.5
+    cross_sectional_rank: true  # Rank carries across currencies
+    rank_weight: 0.50           # Weight on rank vs z-score
+
+# =============================================================================
+# PPP VALUE SIGNAL PARAMETERS
+# =============================================================================
+
+value:
+  # PPP source configuration
+  ppp_source: "imf"              # imf | oecd | big_mac | custom
+
+  # IMF PPP settings
+  imf:
+    update_frequency: "annual"
+    publication_lag_months: 6
+    use_interpolation: true
+
+  # OECD PPP settings
+  oecd:
+    update_frequency: "annual"
+    use_monthly_estimates: true
+
+  # Mean reversion parameters
+  mean_reversion:
+    speed: 0.05                  # 5% annual mean reversion
+    half_life_months: 36         # ~3 year half-life
+    equilibrium_window_years: 10 # Window for equilibrium estimate
+
+  # Deviation calculation
+  deviation:
+    method: "percentage"         # percentage | log | z-score
+    threshold_moderate: 0.15     # 15% deviation = moderate signal
+    threshold_extreme: 0.30      # 30% deviation = extreme signal
+
+  # Signal generation
+  signal:
+    zscore_window: 60            # Shorter window for value signals
+    momentum_filter: true        # Only trade value with momentum
+    momentum_threshold: 0.0      # Must have positive momentum
+
+# =============================================================================
+# RATES CURVE ANALYTICS PARAMETERS
+# =============================================================================
+
+rates:
+  # Curve construction
+  curve:
+    source: "SOFR"               # SOFR | LIBOR_TERM | OIS
+    interpolation: "monotone_convex"  # linear | cubic_spline | monotone_convex
+    day_count: "ACT/360"
+    settlement_lag: 2
+
+  # Key rate tenors for analysis
+  key_tenors:
+    short: "2Y"
+    belly: "5Y"
+    long: "10Y"
+    ultra_long: "30Y"
+
+  # Slope signal (2s10s)
+  slope:
+    short_tenor: "2Y"
+    long_tenor: "10Y"
+    normal_range_bps: [50, 200]  # Normal 2s10s range
+    inversion_threshold: 0       # Below 0 = inverted
+    steepness_threshold: 250     # Above 250bp = steep
+    signal_strength:
+      inverted: -1.0
+      flat: -0.5
+      normal: 0.0
+      steep: 0.5
+      very_steep: 1.0
+
+  # Curvature signal (butterfly)
+  curvature:
+    short_tenor: "2Y"
+    belly_tenor: "5Y"
+    long_tenor: "10Y"
+    calculation: "2*belly - short - long"
+    normal_range_bps: [-20, 20]
+    signal_multiplier: 0.1      # Scale curvature signal
+
+  # Level signal
+  level:
+    weighted_tenors:
+      "2Y": 0.20
+      "5Y": 0.30
+      "10Y": 0.35
+      "30Y": 0.15
+    zscore_window: 252
+    percentile_thresholds:
+      low: 20
+      high: 80
+
+  # Curve momentum
+  momentum:
+    lookback: 20
+    tenors:
+      - "2Y"
+      - "5Y"
+      - "10Y"
+    pca_components: 3           # Level, slope, curvature factors
+
+# =============================================================================
+# REGIME FILTER PARAMETERS
+# =============================================================================
+
+regime:
+  # VIX-based regime
+  vix:
+    ticker: "VIX Index"
+    lookback: 252
+
+    # Absolute thresholds
+    thresholds:
+      low: 12
+      normal: 20
+      elevated: 25
+      high: 30
+      extreme: 40
+
+    # Percentile thresholds (preferred method)
+    percentile:
+      enabled: true
+      low: 20
+      normal_low: 40
+      normal_high: 60
+      elevated: 80
+      extreme: 95
+
+    # Position scaling by regime
+    scaling:
+      low_vol: 1.20             # Increase position in low vol
+      normal: 1.00
+      elevated: 0.70
+      high: 0.40
+      extreme: 0.20             # Minimal exposure in crisis
+
+  # FX volatility regime
+  fx_vol:
+    ticker: "CVIX Index"        # JPM Global FX Vol Index
+    fallback: "EURUSDV1M Curncy"  # EUR/USD 1M implied vol
+
+    thresholds:
+      low: 7
+      normal: 10
+      elevated: 12
+      high: 15
+      extreme: 20
+
+    scaling:
+      low_vol: 1.10
+      normal: 1.00
+      elevated: 0.80
+      high: 0.50
+      extreme: 0.25
+
+  # Drawdown-based regime
+  drawdown:
+    lookback: 252
+    hwm_calculation: "rolling"   # rolling | expanding
+
+    thresholds:
+      normal: -0.03             # -3% drawdown
+      caution: -0.05            # -5% reduce positions
+      warning: -0.08            # -8% significant reduction
+      stop: -0.10               # -10% minimal exposure
+
+    scaling:
+      normal: 1.00
+      caution: 0.75
+      warning: 0.50
+      stop: 0.25
+
+    recovery:
+      enabled: true
+      recovery_threshold: 0.50   # 50% of drawdown recovered
+      scaling_increase: 0.25     # Increase scaling by 25%
+
+  # Risk reversal skew regime
+  risk_reversals:
+    lookback: 20
+    zscore_window: 63
+
+    thresholds:
+      normal: 1.5               # Z-score threshold
+      elevated: 2.0
+      extreme: 2.5
+
+    # Reduce carry positions when negative skew (crash risk)
+    carry_reduction:
+      elevated: 0.20            # Reduce by 20%
+      extreme: 0.40             # Reduce by 40%
+
+  # Correlation regime
+  correlation:
+    lookback: 63
+    correlation_threshold: 0.80  # High correlation warning
+    diversification_target: 0.40  # Target avg correlation
+
+    # Reduce when correlations spike
+    reduction_factor: 0.50
+
+# =============================================================================
+# SIGNAL COMBINATION PARAMETERS
+# =============================================================================
+
+signal_combination:
+  # Primary signal weights
+  weights:
+    momentum: 0.35
+    carry: 0.35
+    value: 0.15
+    rates: 0.15
+
+  # Dynamic weight adjustment
+  dynamic_weights:
+    enabled: true
+    method: "regime_adjusted"    # fixed | regime_adjusted | performance_weighted
+
+    # Regime-based weight shifts
+    regime_shifts:
+      risk_off:
+        momentum: 0.40           # Increase momentum in risk-off
+        carry: 0.20              # Reduce carry in risk-off
+        value: 0.20
+        rates: 0.20
+
+      risk_on:
+        momentum: 0.30
+        carry: 0.40              # Increase carry in risk-on
+        value: 0.15
+        rates: 0.15
+
+      high_vol:
+        momentum: 0.50           # Momentum dominates in high vol
+        carry: 0.15
+        value: 0.15
+        rates: 0.20
+
+  # Signal aggregation
+  aggregation:
+    method: "weighted_average"   # weighted_average | rank_average | sign_weighted
+    normalize: true              # Normalize to [-1, 1]
+    conviction_threshold: 0.25   # Minimum signal for position
+    strong_conviction: 0.60      # Strong signal threshold
+
+# =============================================================================
+# POSITION SIZING PARAMETERS
+# =============================================================================
+
+position_sizing:
+  # Volatility targeting
+  vol_target:
+    method: "full_kelly"         # full_kelly | half_kelly | fixed | risk_parity
+    kelly_fraction: 0.50         # Use half-Kelly
+
+    # Volatility estimation
+    vol_estimation:
+      method: "ewma"             # simple | ewma | garch
+      ewma_halflife: 21
+      garch_p: 1
+      garch_q: 1
+      min_observations: 63
+
+    # Target volatility
+    target:
+      annual: 0.12              # 12% annual target
+      rebalance_threshold: 0.02  # Rebalance if off by 2%
+      min_rebalance_interval: 5  # Minimum days between rebalances
+
+  # Leverage limits
+  leverage:
+    min: 0.50
+    max: 3.00
+    target: 1.50
+
+    # Leverage adjustment speed
+    adjustment_speed: 0.25       # Max 25% leverage change per day
+
+  # Correlation adjustment
+  correlation:
+    enabled: true
+    diversification_multiplier: true  # Scale by diversification ratio
+    max_adjustment: 1.50              # Max 50% increase for diversification
+
+# =============================================================================
+# EXECUTION PARAMETERS
+# =============================================================================
+
+execution:
+  # Order generation
+  orders:
+    rounding: true
+    min_notional: 1000000        # $1M minimum
+    max_order_pct_adv: 0.10      # Max 10% of ADV
+
+    # Order types by urgency
+    order_types:
+      low_urgency: "limit"
+      normal: "limit"
+      high_urgency: "market"
+
+  # Timing
+  timing:
+    primary_window: "16:00-17:00"  # EST
+    backup_window: "10:00-11:00"   # EST
+    avoid_fixing: true              # Avoid 4pm fix
+
+  # Transaction cost estimates (bps)
+  cost_estimates:
+    fx_g10: 1.0
+    fx_em: 5.0
+    metals: 3.0
+    rates: 2.0
