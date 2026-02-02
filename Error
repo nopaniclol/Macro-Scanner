@@ -1,1594 +1,1546 @@
 #!/usr/bin/env python3
 """
-Backtesting Engine for Commodity Trading Signals
-Historical backtesting with walk-forward optimization
-
-Features:
-- Full historical signal simulation
-- Realistic transaction costs and slippage
-- Performance metrics (Sharpe, Sortino, Max DD, etc.)
-- Walk-forward optimization to prevent overfitting
-- Parameter sensitivity analysis
+Sentiment Analysis
+Momentum/trend scanner using BQL (Bloomberg Query Language) for professional-grade data
+Includes Phase 1 (Volume) and Phase 2 (Options Flow) analysis
 """
 
 import bql
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional, Callable
-from dataclasses import dataclass, field
-from scipy import stats
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.gridspec import GridSpec
-import seaborn as sns
-import warnings
-warnings.filterwarnings('ignore')
-%run commodity_signals.ipynb
-
-# Import from existing modules
-try:
-    CommoditySignalGenerator  # Check if already in namespace
-except NameError:
-    from commodity_signals import (
-    CommoditySignalGenerator,
-    COMMODITY_UNIVERSE,
-    SIGNAL_THRESHOLDS,
-    fetch_historical_data,
-    calculate_technical_indicators,
-    )
-
+import matplotlib.patches as mpatches
+from matplotlib.backends.backend_pdf import PdfPages
+from io import BytesIO
+import os
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
-# Backtest parameters
-DEFAULT_CONFIG = {
-    'initial_capital': 10_000_000,      # $10M starting capital
-    'transaction_cost_bps': 2.0,         # 2 bps round-trip
-    'slippage_bps': 1.0,                 # 1 bp slippage
-    'max_position_pct': 0.20,            # Max 20% of capital per position
-    'max_correlation_exposure': 0.50,    # Max 50% in correlated positions
-    'risk_per_trade_pct': 0.02,          # 2% risk per trade
-    'atr_stop_multiple': 2.0,            # 2x ATR for stops
-    'profit_target_multiple': 3.0,       # 3:1 reward/risk
-    'max_holding_days': 20,              # Max holding period
+# Bloomberg tickers (different format than yfinance)
+TICKERS = {
+    'MACRO': [
+        'ESA Index',    # S&P 500 E-mini Futures
+        'NQA Index',    # Nasdaq 100 E-mini Futures
+        'RTYA Index',   # Russell 2000 E-mini Futures
+        'TUA Comdty',   # 2-Year Treasury Futures
+        'FVA Comdty',   # 5-Year Treasury Futures
+        'TYA Comdty',   # 10-Year Treasury Futures
+        'USA Comdty',   # 30-Year Treasury Futures
+        'DXY Index',    # US Dollar Index
+        'USDJPY Curncy',
+        'EURUSD Curncy',
+        'GBPUSD Curncy',
+        'AUDUSD Curncy',
+        'USDCAD Curncy',
+        'CLA Comdty',   # WTI Crude Oil
+        'NGA Comdty',   # Natural Gas
+        'HGA Comdty',   # Copper
+        'PAA Comdty',   # Palladium
+        'PLA Comdty',   # Platinum
+        'GCA Comdty',   # Gold
+        'SIA Comdty',   # Silver
+        'BTC Curncy',   # Bitcoin
+    ],
+    'SECTORS': [
+        'XLK US Equity', 'XLV US Equity', 'XLF US Equity', 'XLY US Equity',
+        'XLC US Equity', 'XLI US Equity', 'XLP US Equity', 'XLE US Equity',
+        'XLU US Equity', 'XLB US Equity', 'XLRE US Equity', 'XHB US Equity',
+        'XBI US Equity', 'SMH US Equity', 'SPHB US Equity', 'SPLV US Equity',
+    ],
+    'TOP_STOCKS': [
+        'AAPL US Equity', 'NVDA US Equity', 'MSFT US Equity', 'AMZN US Equity',
+        'META US Equity', 'TSLA US Equity', 'GOOGL US Equity', 'AVGO US Equity',
+        'GOOG US Equity', 'BRK/B US Equity', 'JPM US Equity', 'LLY US Equity',
+        'V US Equity', 'XOM US Equity', 'UNH US Equity', 'MA US Equity',
+        'COST US Equity', 'HD US Equity', 'WMT US Equity', 'PG US Equity',
+        'NFLX US Equity', 'JNJ US Equity', 'BAC US Equity', 'ABBV US Equity',
+        'CRM US Equity', 'AMD US Equity',
+    ],
+    'WORLD_ETFS': [
+        'VEA US Equity', 'IEMG US Equity', 'EEM US Equity',
+        'ACWI US Equity', 'BNDX US Equity', 'VWOB US Equity',
+    ],
 }
 
-# Walk-forward parameters
-WALK_FORWARD_CONFIG = {
-    'in_sample_months': 12,              # 12 months optimization
-    'out_of_sample_months': 3,           # 3 months testing
-    'anchored': False,                    # Rolling vs expanding window
+# Display names mapping
+TICKER_NAMES = {
+    'ESA Index': 'ES', 'NQA Index': 'NQ', 'RTYA Index': 'RTY',
+    'TUA Comdty': 'ZT', 'FVA Comdty': 'ZF', 'TYA Comdty': 'ZN', 'USA Comdty': 'ZB',
+    'DXY Index': 'DXY', 'USDJPY Curncy': 'USD/JPY', 'EURUSD Curncy': 'EUR/USD',
+    'GBPUSD Curncy': 'GBP/USD', 'AUDUSD Curncy': 'AUD/USD', 'USDCAD Curncy': 'USD/CAD',
+    'CLA Comdty': 'Oil', 'NGA Comdty': 'Nat Gas', 'HGA Comdty': 'Copper',
+    'PAA Comdty': 'Palladium', 'PLA Comdty': 'Platinum',
+    'GCA Comdty': 'Gold', 'SIA Comdty': 'Silver', 'BTC Curncy': 'Bitcoin',
+    'XLK US Equity': 'Technology',
+    'XLV US Equity': 'Health Care',
+    'XLF US Equity': 'Financial',
+    'XLY US Equity': 'Consumer Disc',
+    'XLC US Equity': 'Communication ',
+    'XLI US Equity': 'Industrial ',
+    'XLP US Equity': 'Consumer Staples',
+    'XLE US Equity': 'Energy ',
+    'XLU US Equity': 'Utilities',
+    'XLB US Equity': 'Materials',
+    'XLRE US Equity': 'Real Estate',
+    'XHB US Equity': 'Homebuilders',
+    'XBI US Equity': 'Biotech',
+    'SMH US Equity': 'Semiconductor',
+    'SPHB US Equity': 'S&P High Beta',
+    'SPLV US Equity': 'S&P 500 Low Vol',
 }
 
+# Full names mapping for all tickers
+TICKER_FULL_NAMES = {
+    # Macro - Index Futures
+    'ESA Index': 'S&P 500 E-mini',
+    'NQA Index': 'Nasdaq 100 E-mini',
+    'RTYA Index': 'Russell 2000 E-mini',
+    # Macro - Treasury Futures
+    'TUA Comdty': '2-Year Treasury',
+    'FVA Comdty': '5-Year Treasury',
+    'TYA Comdty': '10-Year Treasury',
+    'USA Comdty': '30-Year Treasury',
+    # Macro - Currencies
+    'DXY Index': 'US Dollar Index',
+    'USDJPY Curncy': 'US Dollar/Japanese Yen',
+    'EURUSD Curncy': 'Euro/US Dollar',
+    'GBPUSD Curncy': 'British Pound/US Dollar',
+    'AUDUSD Curncy': 'Australian Dollar/US Dollar',
+    'USDCAD Curncy': 'US Dollar/Canadian Dollar',
+    # Macro - Commodities
+    'CLA Comdty': 'WTI Crude Oil',
+    'NGA Comdty': 'Natural Gas',
+    'HGA Comdty': 'Copper',
+    'PAA Comdty': 'Palladium',
+    'PLA Comdty': 'Platinum',
+    'GCA Comdty': 'Gold',
+    'SIA Comdty': 'Silver',
+    'BTC Curncy': 'Bitcoin',
+    # Sectors
+    'XLK US Equity': 'Technology Select Sector',
+    'XLV US Equity': 'Health Care Select Sector',
+    'XLF US Equity': 'Financial Select Sector',
+    'XLY US Equity': 'Consumer Discretionary',
+    'XLC US Equity': 'Communication Services',
+    'XLI US Equity': 'Industrial Select Sector',
+    'XLP US Equity': 'Consumer Staples',
+    'XLE US Equity': 'Energy Select Sector',
+    'XLU US Equity': 'Utilities Select Sector',
+    'XLB US Equity': 'Materials Select Sector',
+    'XLRE US Equity': 'Real Estate Select Sector',
+    'XHB US Equity': 'Homebuilders ETF',
+    'XBI US Equity': 'Biotech ETF',
+    'SMH US Equity': 'Semiconductor ETF',
+    'SPHB US Equity': 'S&P 500 High Beta ETF',
+    'SPLV US Equity': 'S&P 500 Low Volatility ETF',
+    # Top Stocks
+    'AAPL US Equity': 'Apple Inc',
+    'NVDA US Equity': 'NVIDIA Corp',
+    'MSFT US Equity': 'Microsoft Corp',
+    'AMZN US Equity': 'Amazon.com Inc',
+    'META US Equity': 'Meta Platforms Inc',
+    'TSLA US Equity': 'Tesla Inc',
+    'GOOGL US Equity': 'Alphabet Inc Class A',
+    'AVGO US Equity': 'Broadcom Inc',
+    'GOOG US Equity': 'Alphabet Inc Class C',
+    'BRK/B US Equity': 'Berkshire Hathaway Inc',
+    'JPM US Equity': 'JPMorgan Chase & Co',
+    'LLY US Equity': 'Eli Lilly & Co',
+    'V US Equity': 'Visa Inc',
+    'XOM US Equity': 'Exxon Mobil Corp',
+    'UNH US Equity': 'UnitedHealth Group Inc',
+    'MA US Equity': 'Mastercard Inc',
+    'COST US Equity': 'Costco Wholesale Corp',
+    'HD US Equity': 'Home Depot Inc',
+    'WMT US Equity': 'Walmart Inc',
+    'PG US Equity': 'Procter & Gamble Co',
+    'NFLX US Equity': 'Netflix Inc',
+    'JNJ US Equity': 'Johnson & Johnson',
+    'BAC US Equity': 'Bank of America Corp',
+    'ABBV US Equity': 'AbbVie Inc',
+    'CRM US Equity': 'Salesforce Inc',
+    'AMD US Equity': 'Advanced Micro Devices',
+    # World ETFs
+    'VEA US Equity': 'Developed Markets ETF',
+    'IEMG US Equity': 'Emerging Markets ETF',
+    'EEM US Equity': 'MSCI Emerging Markets ETF',
+    'ACWI US Equity': 'All Country World Index ETF',
+    'BNDX US Equity': 'Intl Bond ETF',
+    'VWOB US Equity': 'EM Government Bond ETF',
+}
 # ============================================================================
-# DATA CLASSES
-# ============================================================================
-
-@dataclass
-class Trade:
-    """Represents a single trade."""
-    ticker: str
-    direction: str  # 'long' or 'short'
-    entry_date: datetime
-    entry_price: float
-    entry_signal: float
-    position_size: float
-    stop_price: float
-    target_price: float
-    exit_date: Optional[datetime] = None
-    exit_price: Optional[float] = None
-    exit_reason: Optional[str] = None
-    pnl: float = 0.0
-    pnl_pct: float = 0.0
-    holding_days: int = 0
-
-
-@dataclass
-class DailySnapshot:
-    """Daily portfolio snapshot."""
-    date: datetime
-    equity: float
-    cash: float
-    positions_value: float
-    daily_pnl: float
-    daily_return: float
-    drawdown: float
-    positions: Dict = field(default_factory=dict)
-
-
-# ============================================================================
-# BQL SERVICE
+# BQL SERVICE INITIALIZATION
 # ============================================================================
 
 bq = bql.Service()
 
 # ============================================================================
-# BACKTEST ENGINE
+# HELPER FUNCTIONS
 # ============================================================================
 
-class CommodityBacktest:
+def normalize_to_range(values, min_val=-10, max_val=10):
     """
-    Historical backtesting engine for commodity signals.
-
-    Features:
-    - Simulates trading based on signal generator
-    - Models transaction costs and slippage
-    - Tracks all trades and daily P&L
-    - Calculates comprehensive performance metrics
+    Normalize values to range using tanh.
+    More aggressive scaling (divide by 3 instead of 10) for stronger signals.
     """
+    values = np.clip(values, -100, 100)
+    return np.tanh(values / 3) * max_val
 
-    def __init__(
-        self,
-        config: Dict = None
-    ):
-        """
-        Initialize backtest engine.
 
-        Args:
-            config: Configuration dict (uses DEFAULT_CONFIG if None)
-        """
-        self.config = config or DEFAULT_CONFIG.copy()
+def get_display_name(ticker):
+    """Get display name for ticker"""
+    if ticker in TICKER_NAMES:
+        return TICKER_NAMES[ticker]
+    # Extract symbol from Bloomberg format (e.g., "AAPL US Equity" -> "AAPL")
+    return ticker.split()[0]
 
-        # State
-        self.initial_capital = self.config['initial_capital']
-        self.cash = self.initial_capital
-        self.positions = {}  # ticker -> Trade
-        self.trades = []     # Completed trades
-        self.daily_snapshots = []
-        self.equity_curve = []
+def get_full_name(ticker):
+    """Get full name for ticker"""
+    if ticker in TICKER_FULL_NAMES:
+        return TICKER_FULL_NAMES[ticker]
+    # Fallback to ticker itself if no full name defined
+    return ticker
 
-    def reset(self):
-        """Reset backtest state."""
-        self.cash = self.initial_capital
-        self.positions = {}
-        self.trades = []
-        self.daily_snapshots = []
-        self.equity_curve = []
+def is_equity_instrument(ticker):
+    """Check if instrument is equity (stock/ETF) for options analysis"""
+    return 'Equity' in ticker
 
-    def _fetch_historical_prices(
-        self,
-        tickers: List[str],
-        start_date: str,
-        end_date: str
-    ) -> Dict[str, pd.DataFrame]:
-        """
-        Fetch historical price data for backtesting.
-        """
-        # Calculate days needed
-        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
-        days_needed = (end_dt - start_dt).days + 90  # Extra for indicators
 
-        price_data = {}
+def is_futures_instrument(ticker):
+    """Check if instrument is futures/commodities"""
+    return 'Comdty' in ticker or 'Index' in ticker
 
-        for ticker in tickers:
-            df = fetch_historical_data(ticker, days=days_needed)
-            if df is not None and len(df) > 20:
-                df = calculate_technical_indicators(df)
-                # Filter to date range
-                df = df[df['Date'] >= start_date]
-                df = df[df['Date'] <= end_date]
-                price_data[ticker] = df.reset_index(drop=True)
 
-        return price_data
+def is_volume_instrument(ticker):
+    """Check if instrument has volume data (not forex/index)"""
+    return 'Curncy' not in ticker or 'BTC' in ticker
 
-    def _calculate_position_size(
-        self,
-        ticker: str,
-        signal_strength: float,
-        current_price: float,
-        atr: float,
-        portfolio_value: float
-    ) -> float:
-        """
-        Calculate position size using volatility-adjusted sizing.
 
-        Formula:
-        risk_amount = portfolio_value * risk_per_trade_pct
-        position_value = risk_amount / (atr_stop_multiple * atr / current_price)
-        position_value = min(position_value, max_position_pct * portfolio_value)
-        """
-        risk_amount = portfolio_value * self.config['risk_per_trade_pct']
-        stop_distance_pct = (self.config['atr_stop_multiple'] * atr) / current_price
+# ============================================================================
+# BQL DATA FETCHING
+# ============================================================================
 
-        if stop_distance_pct > 0:
-            position_value = risk_amount / stop_distance_pct
-        else:
-            position_value = risk_amount / 0.02  # Default 2% stop
+def fetch_historical_data(ticker, days=90):
+    """
+    Fetch historical OHLCV data using BQL
+    Returns DataFrame with Date, Open, High, Low, Close, Volume
+    """
+    try:
+        from IPython.display import display, HTML
+        # Define date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
 
-        # Cap at max position size
-        max_position_value = portfolio_value * self.config['max_position_pct']
-        position_value = min(position_value, max_position_value)
-
-        # Scale by signal strength (stronger signal = larger position)
-        signal_scale = min(abs(signal_strength) / 10, 1.0)
-        position_value *= signal_scale
-
-        return position_value
-
-    def _calculate_transaction_costs(
-        self,
-        trade_value: float
-    ) -> float:
-        """Calculate total transaction costs (commission + slippage)."""
-        total_bps = self.config['transaction_cost_bps'] + self.config['slippage_bps']
-        return trade_value * (total_bps / 10000)
-
-    def _open_position(
-        self,
-        ticker: str,
-        direction: str,
-        signal: float,
-        current_price: float,
-        atr: float,
-        date: datetime,
-        portfolio_value: float
-    ) -> Optional[Trade]:
-        """
-        Open a new position.
-        """
-        # Calculate position size
-        position_value = self._calculate_position_size(
-            ticker, signal, current_price, atr, portfolio_value
+        # Create BQL request for OHLCV data
+        request = bql.Request(
+            ticker,
+            {
+                'Date': bq.data.px_open()['DATE'],
+                'Open': bq.data.px_open()['value'],
+                'High': bq.data.px_high()['value'],
+                'Low': bq.data.px_low()['value'],
+                'Close': bq.data.px_last()['value'],
+                'Volume': bq.data.px_volume()['value'],
+            },
+            with_params={
+                'fill': 'na',
+                'dates': bq.func.range(
+                    start_date.strftime('%Y-%m-%d'),
+                    end_date.strftime('%Y-%m-%d')
+                ),
+                'calendar':'EXCHANGE'
+            }
         )
 
-        if position_value <= 0:
-            return None
+        # Execute request
+        response = bq.execute(request)
 
-        # Calculate stop and target
-        stop_distance = self.config['atr_stop_multiple'] * atr
+        
+        # Convert to DataFrame using correct method
+        df = pd.concat([data_item.df() for data_item in response], axis=1)
 
-        if direction == 'long':
-            stop_price = current_price - stop_distance
-            target_price = current_price + (stop_distance * self.config['profit_target_multiple'])
-        else:
-            stop_price = current_price + stop_distance
-            target_price = current_price - (stop_distance * self.config['profit_target_multiple'])
+        # Sort by date and reset index
+        df = df.sort_values('Date').reset_index(drop=True)
+        df= df.dropna(subset=['Close'])
 
-        # Deduct transaction costs
-        costs = self._calculate_transaction_costs(position_value)
-        self.cash -= (position_value + costs)
+        #formatting
+        df['Date'] = pd.to_datetime(df['Date'])
 
-        trade = Trade(
-            ticker=ticker,
-            direction=direction,
-            entry_date=date,
-            entry_price=current_price,
-            entry_signal=signal,
-            position_size=position_value,
-            stop_price=stop_price,
-            target_price=target_price,
-        )
+        # Ensure numeric columns are float (not object)
+        numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        self.positions[ticker] = trade
-        return trade
+        # Remove any rows with NaN Close prices
+        df = df.dropna(subset=['Close'])
 
-    def _close_position(
-        self,
-        ticker: str,
-        current_price: float,
-        date: datetime,
-        reason: str
-    ) -> Optional[Trade]:
-        """
-        Close an existing position.
-        """
-        if ticker not in self.positions:
-            return None
+        df=df.reset_index(drop=True)
 
-        trade = self.positions[ticker]
-        trade.exit_date = date
-        trade.exit_price = current_price
-        trade.exit_reason = reason
-        trade.holding_days = (date - trade.entry_date).days
+        return df
 
-        # Calculate P&L
-        if trade.direction == 'long':
-            trade.pnl_pct = (current_price - trade.entry_price) / trade.entry_price
-        else:
-            trade.pnl_pct = (trade.entry_price - current_price) / trade.entry_price
-
-        trade.pnl = trade.position_size * trade.pnl_pct
-
-        # Add back to cash (including P&L, minus exit costs)
-        exit_value = trade.position_size * (1 + trade.pnl_pct)
-        costs = self._calculate_transaction_costs(exit_value)
-        self.cash += (exit_value - costs)
-
-        # Move to completed trades
-        self.trades.append(trade)
-        del self.positions[ticker]
-
-        return trade
-
-    def _check_exits(
-        self,
-        price_data: Dict[str, pd.DataFrame],
-        current_date: datetime,
-        current_signals: Dict[str, float]
-    ):
-        """
-        Check all open positions for exit conditions.
-        """
-        positions_to_close = []
-
-        for ticker, trade in self.positions.items():
-            if ticker not in price_data:
-                continue
-
-            df = price_data[ticker]
-            current_row = df[df['Date'] == current_date.strftime('%Y-%m-%d')]
-
-            if len(current_row) == 0:
-                continue
-
-            current_price = current_row['Close'].iloc[0]
-            current_signal = current_signals.get(ticker, 0)
-            holding_days = (current_date - trade.entry_date).days
-
-            exit_reason = None
-
-            # Check stop-loss
-            if trade.direction == 'long' and current_price <= trade.stop_price:
-                exit_reason = 'Stop-Loss'
-            elif trade.direction == 'short' and current_price >= trade.stop_price:
-                exit_reason = 'Stop-Loss'
-
-            # Check profit target
-            elif trade.direction == 'long' and current_price >= trade.target_price:
-                exit_reason = 'Profit Target'
-            elif trade.direction == 'short' and current_price <= trade.target_price:
-                exit_reason = 'Profit Target'
-
-            # Check signal reversal
-            elif trade.direction == 'long' and current_signal < 0:
-                exit_reason = 'Signal Reversal'
-            elif trade.direction == 'short' and current_signal > 0:
-                exit_reason = 'Signal Reversal'
-
-            # Check max holding period
-            elif holding_days >= self.config['max_holding_days']:
-                exit_reason = 'Max Holding Period'
-
-            if exit_reason:
-                positions_to_close.append((ticker, current_price, exit_reason))
-
-        # Close positions
-        for ticker, price, reason in positions_to_close:
-            self._close_position(ticker, price, current_date, reason)
-
-    def _calculate_portfolio_value(
-        self,
-        price_data: Dict[str, pd.DataFrame],
-        current_date: datetime
-    ) -> float:
-        """
-        Calculate total portfolio value (cash + positions).
-        """
-        positions_value = 0
-
-        for ticker, trade in self.positions.items():
-            if ticker not in price_data:
-                continue
-
-            df = price_data[ticker]
-            current_row = df[df['Date'] == current_date.strftime('%Y-%m-%d')]
-
-            if len(current_row) == 0:
-                # Use last known price
-                positions_value += trade.position_size
-            else:
-                current_price = current_row['Close'].iloc[0]
-                if trade.direction == 'long':
-                    pnl_pct = (current_price - trade.entry_price) / trade.entry_price
-                else:
-                    pnl_pct = (trade.entry_price - current_price) / trade.entry_price
-
-                positions_value += trade.position_size * (1 + pnl_pct)
-
-        return self.cash + positions_value
-
-    def run_backtest(
-        self,
-        start_date: str,
-        end_date: str,
-        commodities: List[str] = None,
-        signal_generator: CommoditySignalGenerator = None
-    ) -> Dict:
-        """
-        Run full historical backtest.
-
-        Args:
-            start_date: Start date (YYYY-MM-DD)
-            end_date: End date (YYYY-MM-DD)
-            commodities: List of commodity tickers (default: all)
-            signal_generator: Signal generator instance
-
-        Returns:
-            Dict with trades, equity curve, and performance metrics
-        """
-        self.reset()
-
-        if commodities is None:
-            commodities = list(COMMODITY_UNIVERSE.keys())
-
-        if signal_generator is None:
-            signal_generator = CommoditySignalGenerator(lookback_days=120)
-
-        print(f"Running backtest from {start_date} to {end_date}")
-        print(f"Commodities: {[COMMODITY_UNIVERSE[t]['name'] for t in commodities]}")
-
-        # Fetch all price data
-        all_tickers = commodities + ['ESA Index', 'DXY Index', 'TYA Comdty', 'HGA Comdty']
-        price_data = self._fetch_historical_prices(all_tickers, start_date, end_date)
-
-        if not price_data:
-            print("Error: No price data available")
-            return {}
-
-        # Get trading dates from first commodity
-        first_ticker = commodities[0]
-        if first_ticker not in price_data:
-            print(f"Error: No data for {first_ticker}")
-            return {}
-
-        trading_dates = price_data[first_ticker]['Date'].unique()
-        trading_dates = sorted([datetime.strptime(str(d)[:10], '%Y-%m-%d') for d in trading_dates])
-
-        prev_equity = self.initial_capital
-        peak_equity = self.initial_capital
-
-        # Main backtest loop
-        for i, current_date in enumerate(trading_dates):
-            # Skip first 20 days for indicator warm-up
-            if i < 20:
-                continue
-
-            # Generate signals for all commodities
-            current_signals = {}
-            for ticker in commodities:
-                if ticker in price_data:
-                    # Use price data up to current date for signal generation
-                    df = price_data[ticker]
-                    historical_df = df[df['Date'] <= current_date.strftime('%Y-%m-%d')]
-
-                    if len(historical_df) >= 20:
-                        # Calculate signal based on latest data
-                        from commodity_signals import calculate_sentiment_score
-                        signal = calculate_sentiment_score(historical_df.iloc[-1])
-                        current_signals[ticker] = signal
-
-            # Check exits first
-            self._check_exits(price_data, current_date, current_signals)
-
-            # Check for new entries
-            portfolio_value = self._calculate_portfolio_value(price_data, current_date)
-
-            for ticker in commodities:
-                if ticker in self.positions:
-                    continue  # Already have position
-
-                if ticker not in current_signals:
-                    continue
-
-                signal = current_signals[ticker]
-                df = price_data[ticker]
-                current_row = df[df['Date'] == current_date.strftime('%Y-%m-%d')]
-
-                if len(current_row) == 0:
-                    continue
-
-                current_price = current_row['Close'].iloc[0]
-                atr = current_row['ATR'].iloc[0] if 'ATR' in current_row.columns else current_price * 0.02
-
-                # Entry conditions
-                if signal >= SIGNAL_THRESHOLDS['bullish']:
-                    self._open_position(
-                        ticker, 'long', signal, current_price, atr,
-                        current_date, portfolio_value
-                    )
-                elif signal <= SIGNAL_THRESHOLDS['bearish']:
-                    self._open_position(
-                        ticker, 'short', signal, current_price, atr,
-                        current_date, portfolio_value
-                    )
-
-            # Record daily snapshot
-            current_equity = self._calculate_portfolio_value(price_data, current_date)
-            daily_pnl = current_equity - prev_equity
-            daily_return = daily_pnl / prev_equity if prev_equity > 0 else 0
-
-            peak_equity = max(peak_equity, current_equity)
-            drawdown = (peak_equity - current_equity) / peak_equity if peak_equity > 0 else 0
-
-            snapshot = DailySnapshot(
-                date=current_date,
-                equity=current_equity,
-                cash=self.cash,
-                positions_value=current_equity - self.cash,
-                daily_pnl=daily_pnl,
-                daily_return=daily_return,
-                drawdown=drawdown,
-                positions={t: p.direction for t, p in self.positions.items()}
-            )
-
-            self.daily_snapshots.append(snapshot)
-            self.equity_curve.append(current_equity)
-            prev_equity = current_equity
-
-        # Close any remaining positions
-        final_date = trading_dates[-1]
-        for ticker in list(self.positions.keys()):
-            if ticker in price_data:
-                df = price_data[ticker]
-                final_price = df['Close'].iloc[-1]
-                self._close_position(ticker, final_price, final_date, 'End of Backtest')
-
-        # Calculate performance metrics
-        metrics = self.calculate_performance_metrics()
-
-        return {
-            'trades': self.trades,
-            'daily_snapshots': self.daily_snapshots,
-            'equity_curve': self.equity_curve,
-            'metrics': metrics,
-            'config': self.config,
-        }
-
-    def calculate_performance_metrics(self) -> Dict:
-        """
-        Calculate comprehensive performance statistics.
-
-        Metrics:
-        - Total Return, CAGR
-        - Sharpe Ratio, Sortino Ratio
-        - Max Drawdown, Max Drawdown Duration
-        - Win Rate, Profit Factor
-        - Average Win/Loss, Expectancy
-        """
-        if not self.daily_snapshots:
-            return {}
-
-        # Convert to pandas for easier calculation
-        equity_series = pd.Series([s.equity for s in self.daily_snapshots])
-        returns_series = pd.Series([s.daily_return for s in self.daily_snapshots])
-        dates = [s.date for s in self.daily_snapshots]
-
-        # Basic return metrics
-        total_return = (equity_series.iloc[-1] / self.initial_capital - 1) * 100
-
-        # CAGR
-        num_years = (dates[-1] - dates[0]).days / 365.25
-        if num_years > 0:
-            cagr = ((equity_series.iloc[-1] / self.initial_capital) ** (1 / num_years) - 1) * 100
-        else:
-            cagr = 0
-
-        # Sharpe Ratio (annualized)
-        if returns_series.std() > 0:
-            sharpe = returns_series.mean() / returns_series.std() * np.sqrt(252)
-        else:
-            sharpe = 0
-
-        # Sortino Ratio (downside deviation only)
-        downside_returns = returns_series[returns_series < 0]
-        if len(downside_returns) > 0 and downside_returns.std() > 0:
-            sortino = returns_series.mean() / downside_returns.std() * np.sqrt(252)
-        else:
-            sortino = sharpe
-
-        # Max Drawdown
-        rolling_max = equity_series.expanding().max()
-        drawdown_series = (rolling_max - equity_series) / rolling_max
-        max_drawdown = drawdown_series.max() * 100
-
-        # Max Drawdown Duration
-        in_drawdown = drawdown_series > 0
-        dd_groups = (~in_drawdown).cumsum()
-        dd_durations = in_drawdown.groupby(dd_groups).sum()
-        max_dd_duration = dd_durations.max() if len(dd_durations) > 0 else 0
-
-        # Trade statistics
-        if self.trades:
-            winning_trades = [t for t in self.trades if t.pnl > 0]
-            losing_trades = [t for t in self.trades if t.pnl <= 0]
-
-            num_trades = len(self.trades)
-            win_rate = len(winning_trades) / num_trades * 100
-
-            avg_win = np.mean([t.pnl for t in winning_trades]) if winning_trades else 0
-            avg_loss = np.mean([t.pnl for t in losing_trades]) if losing_trades else 0
-
-            if avg_loss != 0:
-                profit_factor = abs(sum(t.pnl for t in winning_trades) / sum(t.pnl for t in losing_trades))
-            else:
-                profit_factor = float('inf') if sum(t.pnl for t in winning_trades) > 0 else 0
-
-            # Expectancy per trade
-            expectancy = (win_rate / 100 * avg_win) + ((1 - win_rate / 100) * avg_loss)
-
-            # Average holding period
-            avg_holding_days = np.mean([t.holding_days for t in self.trades])
-
-            # Win/Loss by exit reason
-            exit_reasons = {}
-            for t in self.trades:
-                reason = t.exit_reason or 'Unknown'
-                if reason not in exit_reasons:
-                    exit_reasons[reason] = {'count': 0, 'pnl': 0}
-                exit_reasons[reason]['count'] += 1
-                exit_reasons[reason]['pnl'] += t.pnl
-        else:
-            num_trades = 0
-            win_rate = 0
-            avg_win = 0
-            avg_loss = 0
-            profit_factor = 0
-            expectancy = 0
-            avg_holding_days = 0
-            exit_reasons = {}
-
-        return {
-            'total_return_pct': round(total_return, 2),
-            'cagr_pct': round(cagr, 2),
-            'sharpe_ratio': round(sharpe, 2),
-            'sortino_ratio': round(sortino, 2),
-            'max_drawdown_pct': round(max_drawdown, 2),
-            'max_drawdown_duration_days': int(max_dd_duration),
-            'num_trades': num_trades,
-            'win_rate_pct': round(win_rate, 2),
-            'profit_factor': round(profit_factor, 2),
-            'avg_win': round(avg_win, 2),
-            'avg_loss': round(avg_loss, 2),
-            'expectancy': round(expectancy, 2),
-            'avg_holding_days': round(avg_holding_days, 1),
-            'exit_reasons': exit_reasons,
-            'final_equity': round(equity_series.iloc[-1], 2),
-        }
-
-    def run_parameter_sensitivity(
-        self,
-        base_start_date: str,
-        base_end_date: str,
-        param_name: str,
-        param_values: List,
-        commodities: List[str] = None
-    ) -> pd.DataFrame:
-        """
-        Test sensitivity to parameter changes.
-
-        WHY THIS MATTERS:
-        - Over-optimized parameters fail out-of-sample
-        - Robust strategies work across parameter ranges
-        - Identifies fragile vs robust parameters
-
-        Args:
-            base_start_date: Backtest start
-            base_end_date: Backtest end
-            param_name: Parameter to vary
-            param_values: Values to test
-            commodities: Commodities to backtest
-
-        Returns:
-            DataFrame with performance metrics for each parameter value
-        """
-        results = []
-
-        for value in param_values:
-            # Update config
-            self.config[param_name] = value
-
-            # Run backtest
-            result = self.run_backtest(
-                base_start_date,
-                base_end_date,
-                commodities
-            )
-
-            if result and 'metrics' in result:
-                metrics = result['metrics']
-                metrics['param_value'] = value
-                results.append(metrics)
-
-            print(f"  {param_name}={value}: Sharpe={metrics.get('sharpe_ratio', 0):.2f}, "
-                  f"Return={metrics.get('total_return_pct', 0):.1f}%")
-
-        return pd.DataFrame(results)
-
-
-# ============================================================================
-# WALK-FORWARD OPTIMIZATION
-# ============================================================================
-
-class WalkForwardOptimizer:
-    """
-    Walk-forward optimization to prevent overfitting.
-
-    WHY WALK-FORWARD:
-    - Standard backtesting overfits to historical data
-    - Walk-forward simulates real trading conditions
-    - Each period optimizes on past, tests on future
-    - Measures true out-of-sample performance
-    """
-
-    def __init__(
-        self,
-        in_sample_months: int = 12,
-        out_of_sample_months: int = 3,
-        anchored: bool = False
-    ):
-        """
-        Initialize walk-forward optimizer.
-
-        Args:
-            in_sample_months: Months for optimization
-            out_of_sample_months: Months for testing
-            anchored: True = expanding window, False = rolling window
-        """
-        self.is_months = in_sample_months
-        self.oos_months = out_of_sample_months
-        self.anchored = anchored
-
-    def _generate_windows(
-        self,
-        start_date: str,
-        end_date: str
-    ) -> List[Tuple[str, str, str, str]]:
-        """
-        Generate in-sample and out-of-sample date windows.
-
-        Returns:
-            List of (is_start, is_end, oos_start, oos_end) tuples
-        """
-        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
-
-        windows = []
-        anchor_start = start_dt
-
-        current_is_end = start_dt + timedelta(days=self.is_months * 30)
-
-        while current_is_end < end_dt:
-            # In-sample period
-            if self.anchored:
-                is_start = anchor_start
-            else:
-                is_start = current_is_end - timedelta(days=self.is_months * 30)
-
-            is_end = current_is_end
-
-            # Out-of-sample period
-            oos_start = current_is_end + timedelta(days=1)
-            oos_end = min(
-                oos_start + timedelta(days=self.oos_months * 30),
-                end_dt
-            )
-
-            windows.append((
-                is_start.strftime('%Y-%m-%d'),
-                is_end.strftime('%Y-%m-%d'),
-                oos_start.strftime('%Y-%m-%d'),
-                oos_end.strftime('%Y-%m-%d'),
-            ))
-
-            # Move to next window
-            current_is_end = oos_end + timedelta(days=1)
-
-        return windows
-
-    def run_walk_forward(
-        self,
-        start_date: str,
-        end_date: str,
-        commodities: List[str] = None,
-        optimize_params: List[str] = None,
-        param_ranges: Dict[str, List] = None
-    ) -> Dict:
-        """
-        Execute walk-forward optimization.
-
-        Process:
-        1. Split data into rolling windows
-        2. For each window:
-           a. Optimize parameters on in-sample period
-           b. Test with optimized params on out-of-sample
-        3. Aggregate all OOS periods
-        4. Compare to in-sample performance
-
-        Args:
-            start_date: Overall start date
-            end_date: Overall end date
-            commodities: Commodities to trade
-            optimize_params: Parameters to optimize
-            param_ranges: Parameter ranges to test
-
-        Returns:
-            Dict with IS/OOS comparison, degradation ratio, window results
-        """
-        windows = self._generate_windows(start_date, end_date)
-
-        print(f"Walk-Forward Analysis: {len(windows)} windows")
-        print(f"In-Sample: {self.is_months} months, Out-of-Sample: {self.oos_months} months")
-        print("="*60)
-
-        window_results = []
-        all_oos_trades = []
-        all_is_trades = []
-
-        for i, (is_start, is_end, oos_start, oos_end) in enumerate(windows):
-            print(f"\nWindow {i+1}:")
-            print(f"  In-Sample: {is_start} to {is_end}")
-            print(f"  Out-of-Sample: {oos_start} to {oos_end}")
-
-            # In-sample backtest
-            is_engine = CommodityBacktest()
-            is_result = is_engine.run_backtest(is_start, is_end, commodities)
-            is_metrics = is_result.get('metrics', {})
-
-            # Out-of-sample backtest (using same parameters)
-            oos_engine = CommodityBacktest()
-            oos_result = oos_engine.run_backtest(oos_start, oos_end, commodities)
-            oos_metrics = oos_result.get('metrics', {})
-
-            window_results.append({
-                'window': i + 1,
-                'is_start': is_start,
-                'is_end': is_end,
-                'oos_start': oos_start,
-                'oos_end': oos_end,
-                'is_sharpe': is_metrics.get('sharpe_ratio', 0),
-                'oos_sharpe': oos_metrics.get('sharpe_ratio', 0),
-                'is_return': is_metrics.get('total_return_pct', 0),
-                'oos_return': oos_metrics.get('total_return_pct', 0),
-                'is_win_rate': is_metrics.get('win_rate_pct', 0),
-                'oos_win_rate': oos_metrics.get('win_rate_pct', 0),
-            })
-
-            all_is_trades.extend(is_result.get('trades', []))
-            all_oos_trades.extend(oos_result.get('trades', []))
-
-            print(f"  IS Sharpe: {is_metrics.get('sharpe_ratio', 0):.2f}, "
-                  f"OOS Sharpe: {oos_metrics.get('sharpe_ratio', 0):.2f}")
-
-        # Aggregate results
-        results_df = pd.DataFrame(window_results)
-
-        avg_is_sharpe = results_df['is_sharpe'].mean()
-        avg_oos_sharpe = results_df['oos_sharpe'].mean()
-
-        # Degradation ratio (key metric)
-        if avg_is_sharpe > 0:
-            degradation_ratio = avg_oos_sharpe / avg_is_sharpe
-        else:
-            degradation_ratio = 0
-
-        # Interpretation
-        if degradation_ratio >= 0.8:
-            interpretation = "Excellent - Strategy is robust"
-        elif degradation_ratio >= 0.6:
-            interpretation = "Good - Some overfitting present"
-        elif degradation_ratio >= 0.4:
-            interpretation = "Concerning - Significant overfitting"
-        else:
-            interpretation = "Poor - Strategy is likely overfit"
-
-        summary = {
-            'num_windows': len(windows),
-            'avg_is_sharpe': round(avg_is_sharpe, 2),
-            'avg_oos_sharpe': round(avg_oos_sharpe, 2),
-            'degradation_ratio': round(degradation_ratio, 2),
-            'interpretation': interpretation,
-            'avg_is_return': round(results_df['is_return'].mean(), 2),
-            'avg_oos_return': round(results_df['oos_return'].mean(), 2),
-            'total_is_trades': len(all_is_trades),
-            'total_oos_trades': len(all_oos_trades),
-        }
-
-        print("\n" + "="*60)
-        print("WALK-FORWARD SUMMARY")
-        print("="*60)
-        print(f"Average In-Sample Sharpe: {summary['avg_is_sharpe']}")
-        print(f"Average Out-of-Sample Sharpe: {summary['avg_oos_sharpe']}")
-        print(f"Degradation Ratio: {summary['degradation_ratio']}")
-        print(f"Interpretation: {summary['interpretation']}")
-        print("="*60)
-
-        return {
-            'summary': summary,
-            'window_results': window_results,
-            'results_df': results_df,
-        }
-
-
-# ============================================================================
-# PERFORMANCE REPORTING
-# ============================================================================
-
-def print_backtest_report(result: Dict):
-    """Print formatted backtest report."""
-    if not result:
-        print("No backtest results to display")
-        return
-
-    metrics = result.get('metrics', {})
-    trades = result.get('trades', [])
-    config = result.get('config', {})
-
-    print("\n" + "="*80)
-    print(f"{'BACKTEST RESULTS':^80}")
-    print("="*80)
-
-    print(f"\nConfiguration:")
-    print(f"  Initial Capital: ${config.get('initial_capital', 0):,.0f}")
-    print(f"  Transaction Costs: {config.get('transaction_cost_bps', 0)} bps")
-    print(f"  Max Position: {config.get('max_position_pct', 0)*100:.0f}%")
-    print(f"  Stop Loss: {config.get('atr_stop_multiple', 0)}x ATR")
-
-    print(f"\nPerformance Metrics:")
-    print(f"  Total Return: {metrics.get('total_return_pct', 0):.2f}%")
-    print(f"  CAGR: {metrics.get('cagr_pct', 0):.2f}%")
-    print(f"  Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.2f}")
-    print(f"  Sortino Ratio: {metrics.get('sortino_ratio', 0):.2f}")
-    print(f"  Max Drawdown: {metrics.get('max_drawdown_pct', 0):.2f}%")
-    print(f"  Max DD Duration: {metrics.get('max_drawdown_duration_days', 0)} days")
-
-    print(f"\nTrade Statistics:")
-    print(f"  Number of Trades: {metrics.get('num_trades', 0)}")
-    print(f"  Win Rate: {metrics.get('win_rate_pct', 0):.1f}%")
-    print(f"  Profit Factor: {metrics.get('profit_factor', 0):.2f}")
-    print(f"  Avg Win: ${metrics.get('avg_win', 0):,.0f}")
-    print(f"  Avg Loss: ${metrics.get('avg_loss', 0):,.0f}")
-    print(f"  Expectancy: ${metrics.get('expectancy', 0):,.0f}")
-    print(f"  Avg Holding Period: {metrics.get('avg_holding_days', 0):.1f} days")
-
-    print(f"\nExit Reasons:")
-    for reason, data in metrics.get('exit_reasons', {}).items():
-        print(f"  {reason}: {data['count']} trades, ${data['pnl']:,.0f} P&L")
-
-    print(f"\nFinal Equity: ${metrics.get('final_equity', 0):,.0f}")
-    print("="*80 + "\n")
-
-
-def print_trade_log(trades: List[Trade], max_trades: int = 20):
-    """Print trade log."""
-    if not trades:
-        print("No trades to display")
-        return
-
-    print("\n" + "="*100)
-    print(f"{'TRADE LOG (Last ' + str(max_trades) + ' Trades)':^100}")
-    print("="*100)
-
-    print(f"{'Ticker':<12} {'Dir':<6} {'Entry':<12} {'Exit':<12} {'Entry$':>10} {'Exit$':>10} "
-          f"{'P&L%':>8} {'Days':>6} {'Reason':<15}")
-    print("-"*100)
-
-    for trade in trades[-max_trades:]:
-        ticker = COMMODITY_UNIVERSE.get(trade.ticker, {}).get('name', trade.ticker[:10])
-        entry_date = trade.entry_date.strftime('%Y-%m-%d')
-        exit_date = trade.exit_date.strftime('%Y-%m-%d') if trade.exit_date else 'Open'
-
-        print(f"{ticker:<12} {trade.direction:<6} {entry_date:<12} {exit_date:<12} "
-              f"{trade.entry_price:>10.2f} {trade.exit_price or 0:>10.2f} "
-              f"{trade.pnl_pct*100:>7.2f}% {trade.holding_days:>6} {trade.exit_reason or '':<15}")
-
-    print("="*100 + "\n")
-
-
-# ============================================================================
-# VISUALIZATION / CHARTING FUNCTIONS
-# ============================================================================
-
-def plot_equity_curve(
-    result: Dict,
-    figsize: Tuple[int, int] = (14, 10),
-    save_path: str = None
-) -> plt.Figure:
-    """
-    Plot equity curve with drawdown overlay.
-
-    Shows:
-    - Portfolio equity over time
-    - Drawdown periods highlighted
-    - Key metrics annotation
-
-    Args:
-        result: Backtest result dictionary
-        figsize: Figure size
-        save_path: Optional path to save the figure
-
-    Returns:
-        matplotlib Figure object
-    """
-    if not result or 'daily_snapshots' not in result:
-        print("No backtest data to plot")
+    except Exception as e:
+        print(f"Error fetching data for {ticker}: {e}")
         return None
 
-    snapshots = result['daily_snapshots']
-    metrics = result.get('metrics', {})
 
-    dates = [s.date for s in snapshots]
-    equity = [s.equity for s in snapshots]
-    drawdown = [s.drawdown * 100 for s in snapshots]
+def fetch_options_data(ticker):
+    """
+    Fetch options flow data using BQL (Phase 2)
+    Returns dict with implied_volatility and call_put_ratio
+    Different calculation for Futures vs Equities
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, height_ratios=[3, 1], sharex=True)
+    Call/Put Ratio = Call IV / Put IV
+    - Higher ratio (>1.2) = Bullish (more call buying)
+    - Lower ratio (<0.7) = Bearish (more put buying)
+    """
+    # Only fetch for instruments that have options (equities and futures)
+    if not (is_equity_instrument(ticker) or is_futures_instrument(ticker)):
+        return None
 
-    # Equity Curve
-    ax1.plot(dates, equity, color='navy', linewidth=1.5, label='Portfolio Equity')
-    ax1.axhline(y=result.get('config', {}).get('initial_capital', equity[0]),
-               color='gray', linestyle='--', alpha=0.5, label='Initial Capital')
+    try:
+        # Determine if this is a futures instrument
+        is_futures = is_futures_instrument(ticker)
 
-    # Fill between initial and current
-    ax1.fill_between(dates, result.get('config', {}).get('initial_capital', equity[0]),
-                     equity, where=[e > result.get('config', {}).get('initial_capital', equity[0]) for e in equity],
-                     color='green', alpha=0.2)
-    ax1.fill_between(dates, result.get('config', {}).get('initial_capital', equity[0]),
-                     equity, where=[e <= result.get('config', {}).get('initial_capital', equity[0]) for e in equity],
-                     color='red', alpha=0.2)
+        # Create BQL request for options metrics
+        if is_futures:
+            # Futures use different IV fields
+            request = bql.Request(
+                ticker,
+                {
+                    'Implied_Volatility': bq.data.IMPLIED_VOLATILITY(),
+                    'Fut_Call_IV': bq.data.FUT_CALL_IMPLIED_VOLATILITY(),
+                    'Fut_Put_IV': bq.data.FUT_PUT_IMPLIED_VOLATILITY(),
+                }
+            )
+        else:
+            # Equities use 60-day call/put IV
+            request = bql.Request(
+                ticker,
+                {
+                    'Implied_Volatility': bq.data.IMPLIED_VOLATILITY(),
+                    'Call_IV_60D': bq.data.CALL_IMP_VOL_60D(),
+                    'Put_IV_60D': bq.data.PUT_IMP_VOL_60D(),
+                }
+            )
 
-    # Formatting
-    ax1.set_ylabel('Portfolio Value ($)', fontsize=11)
-    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-    ax1.legend(loc='upper left')
-    ax1.grid(True, alpha=0.3)
+        # Execute request
+        response = bq.execute(request)
+        data = pd.concat([data_item.df() for data_item in response], axis=1)
 
-    # Add metrics annotation
-    metrics_text = (
-        f"Total Return: {metrics.get('total_return_pct', 0):.1f}%\n"
-        f"CAGR: {metrics.get('cagr_pct', 0):.1f}%\n"
-        f"Sharpe: {metrics.get('sharpe_ratio', 0):.2f}\n"
-        f"Max DD: {metrics.get('max_drawdown_pct', 0):.1f}%\n"
-        f"Win Rate: {metrics.get('win_rate_pct', 0):.1f}%"
+        # Extract latest values and calculate call/put ratio
+        if is_futures:
+            fut_call_iv = data['Fut_Call_IV'].iloc[-1] if 'Fut_Call_IV' in data.columns else None
+            fut_put_iv = data['Fut_Put_IV'].iloc[-1] if 'Fut_Put_IV' in data.columns else None
+
+            # Calculate call/put ratio: Call IV / Put IV
+            if fut_call_iv and fut_put_iv and fut_put_iv > 0:
+                call_put_ratio = fut_call_iv / fut_put_iv
+            else:
+                call_put_ratio = 1.0
+        else:
+            call_iv_60d = data['Call_IV_60D'].iloc[-1] if 'Call_IV_60D' in data.columns else None
+            put_iv_60d = data['Put_IV_60D'].iloc[-1] if 'Put_IV_60D' in data.columns else None
+
+            # Calculate call/put ratio: Call IV / Put IV
+            if call_iv_60d and put_iv_60d and put_iv_60d > 0:
+                call_put_ratio = call_iv_60d / put_iv_60d
+            else:
+                call_put_ratio = 1.0
+
+        # Extract implied volatility
+        implied_vol = data['Implied_Volatility'].iloc[-1] if 'Implied_Volatility' in data.columns else 50
+
+        result = {
+            'call_put_ratio': call_put_ratio,
+            'implied_volatility': implied_vol,
+        }
+
+        return result
+
+    except Exception as e:
+        print(f"Warning: Could not fetch options data for {ticker}: {e}")
+        return None
+
+
+# ============================================================================
+# TECHNICAL INDICATORS
+# ============================================================================
+
+def calculate_indicators(df):
+    """Calculate all technical indicators"""
+
+    # ROC - Rate of Change (multiple timeframes)
+    df['ROC_1'] = df['Close'].pct_change(1) * 100
+    df['ROC_2'] = df['Close'].pct_change(2) * 100
+    df['ROC_5'] = df['Close'].pct_change(5) * 100
+    df['ROC_10'] = df['Close'].pct_change(10) * 100
+    df['ROC_20'] = df['Close'].pct_change(20) * 100
+
+    # Moving Averages
+    df['MA_5'] = df['Close'].rolling(window=5).mean()
+    df['MA_10'] = df['Close'].rolling(window=10).mean()
+    df['MA_20'] = df['Close'].rolling(window=20).mean()
+    df['MA_50'] = df['Close'].rolling(window=50).mean()
+
+    # MA Slopes (trend direction)
+    df['MA_5_slope'] = df['MA_5'].pct_change(5) * 100
+    df['MA_10_slope'] = df['MA_10'].pct_change(5) * 100
+    df['MA_20_slope'] = df['MA_20'].pct_change(10) * 100
+
+    # RSI
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+
+    # Volume indicators (Phase 1)
+    if 'Volume' in df.columns and df['Volume'].sum() > 0:
+        # Volume ratio vs 20-day average
+        df['Vol_MA_20'] = df['Volume'].rolling(window=20).mean()
+        df['Vol_Ratio'] = df['Volume'] / df['Vol_MA_20']
+
+        # Volume trend (5-day vs 20-day MA)
+        df['Vol_MA_5'] = df['Volume'].rolling(window=5).mean()
+        df['Vol_Trend'] = df['Vol_MA_5'] / df['Vol_MA_20']
+
+        # Volume-Price correlation
+        df['Vol_Price_Corr'] = np.sign(df['ROC_1']) * (df['Vol_Ratio'] - 1)
+    else:
+        # Neutral values for instruments without volume
+        df['Vol_Ratio'] = 1.0
+        df['Vol_Trend'] = 1.0
+        df['Vol_Price_Corr'] = 0.0
+
+    return df
+
+
+# ============================================================================
+# SCORING ALGORITHM
+# ============================================================================
+
+def calculate_daily_score(df_row, options_data=None):
+    """
+    Calculate composite score with volume and options flow.
+
+    Base Components (92%):
+    - ROC (Price Momentum): 35%
+    - MA Trend: 25%
+    - Volume & Conviction: 20%
+    - RSI: 12%
+
+    Options Flow (8%) - Stocks/ETFs/Futures with options:
+    - Call/Put Ratio: 4%
+    - Implied Volatility: 4%
+    """
+
+    # === ROC SIGNALS (35%) ===
+    # Multi-timeframe momentum with recent bias reduced
+    roc_score = (
+        df_row['ROC_1'] * 0.15 +   # Daily (reduced from 35%)
+        df_row['ROC_2'] * 0.15 +   # 2-day (reduced from 25%)
+        df_row['ROC_5'] * 0.25 +   # Weekly (increased)
+        df_row['ROC_10'] * 0.25 +  # 2-week (increased)
+        df_row['ROC_20'] * 0.20    # Monthly
     )
-    ax1.text(0.02, 0.98, metrics_text, transform=ax1.transAxes, fontsize=10,
-             verticalalignment='top', fontfamily='monospace',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+    roc_score = normalize_to_range(roc_score) * 0.35
 
-    ax1.set_title('Portfolio Equity Curve', fontsize=14, fontweight='bold')
+    # === MA TREND SIGNALS (25%) ===
+    ma_slope_score = (
+        df_row['MA_5_slope'] * 0.3 +
+        df_row['MA_10_slope'] * 0.3 +
+        df_row['MA_20_slope'] * 0.4
+    )
 
-    # Drawdown Chart
-    ax2.fill_between(dates, 0, drawdown, color='red', alpha=0.5)
-    ax2.plot(dates, drawdown, color='darkred', linewidth=1)
-    ax2.set_ylabel('Drawdown (%)', fontsize=11)
-    ax2.set_xlabel('Date', fontsize=11)
-    ax2.set_ylim(max(drawdown) * 1.1, 0)
-    ax2.grid(True, alpha=0.3)
-    ax2.set_title('Underwater Chart (Drawdown)', fontsize=12)
+    # MA crossover signals
+    ma_cross_score = 0
+    if df_row['MA_5'] > df_row['MA_10'] > df_row['MA_20']:
+        ma_cross_score = 5  # Bullish alignment
+    elif df_row['MA_5'] < df_row['MA_10'] < df_row['MA_20']:
+        ma_cross_score = -5  # Bearish alignment
 
-    # Format x-axis
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-    plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    ma_score = (normalize_to_range(ma_slope_score) * 0.7 +
+                normalize_to_range(ma_cross_score) * 0.3) * 0.25
 
-    plt.tight_layout()
+    # === VOLUME & CONVICTION (20%) - Phase 1 ===
+    vol_ratio_score = normalize_to_range((df_row['Vol_Ratio'] - 1) * 100) * 0.40
+    vol_trend_score = normalize_to_range((df_row['Vol_Trend'] - 1) * 100) * 0.30
+    vol_price_corr_score = normalize_to_range(df_row['Vol_Price_Corr'] * 100) * 0.30
 
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Chart saved to: {save_path}")
+    volume_score = (vol_ratio_score + vol_trend_score + vol_price_corr_score) * 0.20
 
-    return fig
+    # === RSI (12%) ===
+    rsi_normalized = (df_row['RSI'] - 50) / 5  # Center at 50, scale
+    rsi_score = normalize_to_range(rsi_normalized) * 0.12
 
+    # === PRICE VS MA (8%) ===
+    # Distance from key moving averages
+    price_ma_score = 0
+    if not pd.isna(df_row['MA_20']):
+        pct_from_ma20 = ((df_row['Close'] - df_row['MA_20']) / df_row['MA_20']) * 100
+        price_ma_score = normalize_to_range(pct_from_ma20) * 0.08
 
-def plot_trade_analysis(
-    result: Dict,
-    figsize: Tuple[int, int] = (16, 12),
-    save_path: str = None
-) -> plt.Figure:
-    """
-    Plot comprehensive trade analysis.
+    # === BASE SCORE (92%) ===
+    base_score = roc_score + ma_score + volume_score + rsi_score + price_ma_score
 
-    Includes:
-    - P&L distribution histogram
-    - Win/Loss by commodity
-    - Monthly returns heatmap
-    - Trade duration analysis
-
-    Args:
-        result: Backtest result dictionary
-        figsize: Figure size
-        save_path: Optional path to save the figure
-
-    Returns:
-        matplotlib Figure object
-    """
-    if not result or 'trades' not in result:
-        print("No trade data to plot")
-        return None
-
-    trades = result['trades']
-    if not trades:
-        print("No trades executed")
-        return None
-
-    fig = plt.figure(figsize=figsize)
-    gs = GridSpec(2, 3, figure=fig, hspace=0.3, wspace=0.3)
-
-    # 1. P&L Distribution Histogram
-    ax1 = fig.add_subplot(gs[0, 0])
-    pnl_pcts = [t.pnl_pct * 100 for t in trades]
-
-    ax1.hist(pnl_pcts, bins=30, color='steelblue', edgecolor='black', alpha=0.7)
-    ax1.axvline(x=0, color='red', linestyle='--', linewidth=2)
-    ax1.axvline(x=np.mean(pnl_pcts), color='green', linestyle='--', linewidth=2,
-               label=f'Mean: {np.mean(pnl_pcts):.2f}%')
-
-    ax1.set_xlabel('P&L (%)', fontsize=10)
-    ax1.set_ylabel('Frequency', fontsize=10)
-    ax1.set_title('Trade P&L Distribution', fontsize=12, fontweight='bold')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-
-    # 2. Win/Loss by Commodity (Stacked Bar)
-    ax2 = fig.add_subplot(gs[0, 1])
-
-    commodity_stats = {}
-    for t in trades:
-        name = COMMODITY_UNIVERSE.get(t.ticker, {}).get('name', t.ticker)
-        if name not in commodity_stats:
-            commodity_stats[name] = {'wins': 0, 'losses': 0, 'pnl': 0}
-        if t.pnl > 0:
-            commodity_stats[name]['wins'] += 1
+    # === OPTIONS FLOW (8%) - Phase 2 ===
+    options_score = 0
+    if options_data is not None:
+        # Call/Put Ratio (4%) - Call IV / Put IV
+        # Higher ratio = more calls being bought (bullish)
+        # Lower ratio = more puts being bought (bearish)
+        cp_ratio = options_data['call_put_ratio']
+        if cp_ratio > 1.5:
+            cp_score = 10  # Very bullish (extreme call buying)
+        elif cp_ratio > 1.2:
+            cp_score = 5   # Bullish
+        elif cp_ratio > 0.7:
+            cp_score = 0   # Neutral
+        elif cp_ratio > 0.5:
+            cp_score = -5  # Bearish
         else:
-            commodity_stats[name]['losses'] += 1
-        commodity_stats[name]['pnl'] += t.pnl
+            cp_score = -10 # Very bearish (extreme put buying)
 
-    names = list(commodity_stats.keys())
-    wins = [commodity_stats[n]['wins'] for n in names]
-    losses = [commodity_stats[n]['losses'] for n in names]
+        cp_normalized = normalize_to_range(cp_score) * 0.04
 
-    x = np.arange(len(names))
-    width = 0.6
+        # Implied Volatility (4%) - contextual to price trend
+        # High IV can signal conviction (uptrend) or panic (downtrend)
+        implied_vol = options_data['implied_volatility']
+        price_trend = df_row['ROC_10']  # Use 10-day trend for context
 
-    ax2.bar(x, wins, width, label='Wins', color='green', alpha=0.7)
-    ax2.bar(x, [-l for l in losses], width, label='Losses', color='red', alpha=0.7)
+        # Normalize IV to typical range (20-60 for equities, can be higher for commodities)
+        # IV > 40 = high, IV < 20 = low (rough guideline)
+        iv_deviation = (implied_vol - 30) / 10  # Center at 30, normalize
 
-    ax2.set_ylabel('Number of Trades', fontsize=10)
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(names, rotation=45, ha='right')
-    ax2.axhline(y=0, color='black', linewidth=0.5)
-    ax2.set_title('Wins/Losses by Commodity', fontsize=12, fontweight='bold')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3, axis='y')
+        if price_trend > 0:
+            # Uptrend: High IV = strong conviction/momentum
+            iv_score = iv_deviation
+        else:
+            # Downtrend: High IV = panic/capitulation (potential reversal)
+            iv_score = -iv_deviation
 
-    # 3. P&L by Commodity (Bar)
-    ax3 = fig.add_subplot(gs[0, 2])
-    pnls = [commodity_stats[n]['pnl'] for n in names]
-    colors = ['green' if p > 0 else 'red' for p in pnls]
+        iv_normalized = normalize_to_range(iv_score) * 0.04
 
-    ax3.bar(x, pnls, width, color=colors, alpha=0.7)
-    ax3.set_ylabel('Total P&L ($)', fontsize=10)
-    ax3.set_xticks(x)
-    ax3.set_xticklabels(names, rotation=45, ha='right')
-    ax3.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-    ax3.axhline(y=0, color='black', linewidth=0.5)
-    ax3.set_title('Total P&L by Commodity', fontsize=12, fontweight='bold')
-    ax3.grid(True, alpha=0.3, axis='y')
+        options_score = cp_normalized + iv_normalized
 
-    # 4. Monthly Returns Heatmap
-    ax4 = fig.add_subplot(gs[1, 0:2])
+    # === TOTAL SCORE ===
+    total_score = base_score + options_score
 
-    # Calculate monthly returns from daily snapshots
-    snapshots = result.get('daily_snapshots', [])
-    if snapshots:
-        df_equity = pd.DataFrame({
-            'date': [s.date for s in snapshots],
-            'equity': [s.equity for s in snapshots]
-        })
-        df_equity['date'] = pd.to_datetime(df_equity['date'])
-        df_equity.set_index('date', inplace=True)
-
-        # Monthly returns
-        monthly = df_equity.resample('M').last()
-        monthly['return'] = monthly['equity'].pct_change() * 100
-
-        # Pivot for heatmap
-        monthly['year'] = monthly.index.year
-        monthly['month'] = monthly.index.month
-
-        pivot = monthly.pivot_table(values='return', index='year', columns='month')
-        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-        pivot.columns = [month_names[m-1] for m in pivot.columns]
-
-        sns.heatmap(pivot, annot=True, fmt='.1f', cmap='RdYlGn', center=0,
-                   ax=ax4, cbar_kws={'label': 'Return (%)'}, linewidths=0.5)
-        ax4.set_title('Monthly Returns Heatmap (%)', fontsize=12, fontweight='bold')
-        ax4.set_xlabel('')
-        ax4.set_ylabel('Year', fontsize=10)
-
-    # 5. Trade Duration Distribution
-    ax5 = fig.add_subplot(gs[1, 2])
-    durations = [t.holding_days for t in trades]
-
-    ax5.hist(durations, bins=20, color='purple', edgecolor='black', alpha=0.7)
-    ax5.axvline(x=np.mean(durations), color='orange', linestyle='--', linewidth=2,
-               label=f'Mean: {np.mean(durations):.1f} days')
-
-    ax5.set_xlabel('Holding Period (Days)', fontsize=10)
-    ax5.set_ylabel('Frequency', fontsize=10)
-    ax5.set_title('Trade Duration Distribution', fontsize=12, fontweight='bold')
-    ax5.legend()
-    ax5.grid(True, alpha=0.3)
-
-    plt.suptitle('Trade Analysis Dashboard', fontsize=14, fontweight='bold', y=1.02)
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Chart saved to: {save_path}")
-
-    return fig
+    return np.clip(total_score, -10, 10)
 
 
-def plot_walk_forward_results(
-    wf_result: Dict,
-    figsize: Tuple[int, int] = (14, 10),
-    save_path: str = None
-) -> plt.Figure:
-    """
-    Plot walk-forward optimization results.
+def calculate_scores_for_ticker(ticker):
+    """Calculate historical scores for a ticker"""
 
-    Shows:
-    - In-sample vs Out-of-sample Sharpe by window
-    - Degradation ratio visualization
-    - Return comparison
-
-    Args:
-        wf_result: Walk-forward result dictionary
-        figsize: Figure size
-        save_path: Optional path to save the figure
-
-    Returns:
-        matplotlib Figure object
-    """
-    if not wf_result or 'window_results' not in wf_result:
-        print("No walk-forward data to plot")
+    # Fetch OHLCV data
+    df = fetch_historical_data(ticker, days=90)
+    if df is None or len(df) < 20:
         return None
 
-    window_results = wf_result['window_results']
-    summary = wf_result.get('summary', {})
+    # Calculate indicators
+    df = calculate_indicators(df)
 
-    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    # Fetch options data (if applicable)
+    # Function already checks for equity/futures inside, so no need for external check
+    options_data = fetch_options_data(ticker)
 
-    # 1. IS vs OOS Sharpe Ratio by Window
-    ax1 = axes[0, 0]
-    windows = [w['window'] for w in window_results]
-    is_sharpe = [w['is_sharpe'] for w in window_results]
-    oos_sharpe = [w['oos_sharpe'] for w in window_results]
+    # Calculate daily scores
+    scores = []
+    for idx, row in df.iterrows():
+        if idx < 20:  # Need 20 days for all indicators
+            scores.append(np.nan)
+        else:
+            score = calculate_daily_score(row, options_data)
+            scores.append(score)
 
-    x = np.arange(len(windows))
-    width = 0.35
+    df['Score'] = scores
 
-    ax1.bar(x - width/2, is_sharpe, width, label='In-Sample', color='steelblue', alpha=0.8)
-    ax1.bar(x + width/2, oos_sharpe, width, label='Out-of-Sample', color='coral', alpha=0.8)
+    # Apply EMA smoothing (5-day)
+    df['Score_EMA'] = df['Score'].ewm(span=5, adjust=False).mean()
 
-    ax1.set_ylabel('Sharpe Ratio', fontsize=10)
-    ax1.set_xlabel('Window', fontsize=10)
-    ax1.set_xticks(x)
-    ax1.set_xticklabels([f'W{w}' for w in windows])
-    ax1.set_title('In-Sample vs Out-of-Sample Sharpe', fontsize=12, fontweight='bold')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3, axis='y')
-    ax1.axhline(y=0, color='black', linewidth=0.5)
+    return df
 
-    # 2. IS vs OOS Return by Window
-    ax2 = axes[0, 1]
-    is_return = [w['is_return'] for w in window_results]
-    oos_return = [w['oos_return'] for w in window_results]
 
-    ax2.bar(x - width/2, is_return, width, label='In-Sample', color='steelblue', alpha=0.8)
-    ax2.bar(x + width/2, oos_return, width, label='Out-of-Sample', color='coral', alpha=0.8)
+# ============================================================================
+# SENTIMENT CLASSIFICATION
+# ============================================================================
 
-    ax2.set_ylabel('Return (%)', fontsize=10)
-    ax2.set_xlabel('Window', fontsize=10)
-    ax2.set_xticks(x)
-    ax2.set_xticklabels([f'W{w}' for w in windows])
-    ax2.set_title('In-Sample vs Out-of-Sample Returns', fontsize=12, fontweight='bold')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3, axis='y')
-    ax2.axhline(y=0, color='black', linewidth=0.5)
+def classify_sentiment(score):
+    """Classify score into sentiment category"""
+    if pd.isna(score):
+        return 'N/A', ''
+    elif score >= 7:
+        return 'Very Bullish (L/S)', '\033[1;32m'  # Bold green
+    elif score >= 4:
+        return 'Bullish (L)', '\033[32m'  # Green
+    elif score >= -4:
+        return 'Neutral (L/S chop)', '\033[37m'  # White
+    elif score >= -7:
+        return 'Bearish (S)', '\033[31m'  # Red
+    else:
+        return 'Very Bearish (L/S)', '\033[1;31m'  # Bold red
 
-    # 3. Degradation Ratio Gauge
-    ax3 = axes[1, 0]
-    degradation = summary.get('degradation_ratio', 0)
 
-    # Create gauge visualization
-    theta = np.linspace(0, np.pi, 100)
-    r = 1
+# ============================================================================
+# OUTPUT FORMATTING
+# ============================================================================
 
-    # Background arc
-    for i, (start, end, color) in enumerate([
-        (0, 0.4, 'red'),
-        (0.4, 0.6, 'orange'),
-        (0.6, 0.8, 'yellow'),
-        (0.8, 1.0, 'green')
-    ]):
-        theta_section = np.linspace(np.pi * (1 - end), np.pi * (1 - start), 20)
-        ax3.fill_between(theta_section, 0.7, 1, alpha=0.3, color=color)
+def format_score(score):
+    """Format score with color"""
+    if pd.isna(score):
+        return 'N/A'
+    sentiment, color = classify_sentiment(score)
+    reset = '\033[0m'
+    return f"{color}{score:>5.1f}{reset}"
 
-    # Needle
-    needle_theta = np.pi * (1 - degradation)
-    ax3.annotate('', xy=(needle_theta, 0.9), xytext=(np.pi/2, 0),
-                arrowprops=dict(arrowstyle='->', color='black', lw=2))
 
-    ax3.set_xlim(0, np.pi)
-    ax3.set_ylim(0, 1.2)
-    ax3.set_aspect('equal')
+def print_results(results_by_category):
+    """Print formatted results matching reference style"""
+
+    print("\n" + "="*150)
+    print(f"{'SENTIMENT SCORE MODEL':^150}")
+    print(f"{'Phase 1 (Volume) + Phase 2 (Options Flow) Enabled':^150}")
+    print("="*150 + "\n")
+
+    for category, results in results_by_category.items():
+        print(f"\n{'='*20} {category} {'='*20}\n")
+
+        # Header
+        header = (
+            f"{'Ticker':<20} {'Score':>6} {'Sentiment':<25} "
+            f"{'5D Avg':>2} {'D-1':>5} {'D-2':>8} {'D-3':>8} {'D-4':>8} "
+            f"{'10D Avg':>16} {'20D Avg':>12}"
+        )
+        print(header)
+        print("-" * 150)
+
+        # Sort by current score (descending)
+        results_sorted = sorted(results, key=lambda x: x['current_score'] if not pd.isna(x['current_score']) else -999, reverse=True)
+
+        for result in results_sorted:
+            display_name = get_display_name(result['ticker'])
+            full_name = get_full_name(result['ticker'])
+            if len(full_name) > 27:
+                full_name = full_name[:24] + "..."
+            score = result['current_score']
+            sentiment, color = classify_sentiment(score)
+            reset = '\033[0m'
+
+            # Format scores with colors
+            score_str = format_score(score)
+            sentiment_str = f"{color}{sentiment}{reset}"
+
+            row = (
+                f"{display_name:<20} {score_str} {sentiment_str:<25} "
+                f"{result['avg_5d']:>10.1f} {result['d_minus_1']:>8.1f} "
+                f"{result['d_minus_2']:>8.1f} {result['d_minus_3']:>8.1f} "
+                f"{result['d_minus_4']:>8.1f} {result['avg_10d']:>10.1f} "
+                f"{result['avg_20d']:>10.1f}"
+            )
+            print(row)
+
+        print()
+
+
+
+def analyze_macro_quadrant(results_by_category):
+    """
+    Analyzes current macro environment using  four-quadrant framework.
+
+    Quadrants:
+    - Quad 1 (Goldilocks): Rising growth + Falling inflation
+    - Quad 2 (Reflation): Rising growth + Rising inflation
+    - Quad 3 (Stagflation): Falling growth + Rising inflation
+    - Quad 4 (Risk-Off): Falling growth + Falling inflation
+
+    Returns: Dictionary with quadrant, growth signal, inflation signal, and analysis text
+    """
+
+    # Extract key indicators from results
+    all_results = {}
+    for category, results in results_by_category.items():
+        for result in results:
+            all_results[result['ticker']] = result
+
+    # Helper function to safely get score
+    def get_score(ticker):
+        return all_results.get(ticker, {}).get('current_score', np.nan)
+
+    def get_avg_5d(ticker):
+        return all_results.get(ticker, {}).get('avg_5d', np.nan)
+
+    # === GROWTH SIGNALS ===
+    # Equity indices momentum (S&P, Nasdaq, Russell)
+    equity_scores = []
+    for ticker in ['ESA Index', 'NQA Index', 'RTYA Index']:
+        score = get_score(ticker)
+        if not pd.isna(score):
+            equity_scores.append(score)
+
+    equity_signal = np.mean(equity_scores) if equity_scores else 0
+
+    # Cyclical commodities (Copper, Oil as economic demand proxies)
+    commodity_scores = []
+    for ticker in ['HGA Comdty', 'CLA Comdty']:  # Copper, Oil
+        score = get_score(ticker)
+        if not pd.isna(score):
+            commodity_scores.append(score)
+
+    commodity_signal = np.mean(commodity_scores) if commodity_scores else 0
+
+    # Combined growth signal
+    growth_signal = (equity_signal * 0.7 + commodity_signal * 0.3)
+    growth_rising = growth_signal > 0
+
+    # === INFLATION SIGNALS ===
+    # Treasury yields (inverted - falling bonds = rising yields = rising inflation)
+    bond_scores = []
+    for ticker in ['TUA Comdty', 'FVA Comdty', 'TYA Comdty', 'USA Comdty']:
+        score = get_score(ticker)
+        if not pd.isna(score):
+            bond_scores.append(score)
+
+    bond_signal = -np.mean(bond_scores) if bond_scores else 0  # Inverted
+
+    # Commodities (Gold, Silver, Oil as inflation hedges)
+    inflation_commodity_scores = []
+    for ticker in ['GCA Comdty', 'SIA Comdty', 'CLA Comdty']:  # Gold, Silver, Oil
+        score = get_score(ticker)
+        if not pd.isna(score):
+            inflation_commodity_scores.append(score)
+
+    commodity_inflation_signal = np.mean(inflation_commodity_scores) if inflation_commodity_scores else 0
+
+    # Combined inflation signal
+    inflation_signal = (bond_signal * 0.5 + commodity_inflation_signal * 0.5)
+    inflation_rising = inflation_signal > 0
+
+    # === DETERMINE QUADRANT ===
+    if growth_rising and not inflation_rising:
+        quadrant = "Quad 1: Goldilocks (Disinflation)"
+        quadrant_num = 1
+        description = "Rising growth with falling inflation"
+        outperformers = "Equities, credit, crypto, EM assets"
+        underperformers = "Cyclical commodities"
+        strategy = "Risk-on positioning. Favor growth equities and credit."
+    elif growth_rising and inflation_rising:
+        quadrant = "Quad 2: Reflation"
+        quadrant_num = 2
+        description = "Rising growth and rising inflation"
+        outperformers = "Equities, commodities, risky currencies"
+        underperformers = "Precious metals"
+        strategy = "Strong risk appetite. Watch for central bank tightening signals."
+    elif not growth_rising and inflation_rising:
+        quadrant = "Quad 3: Stagflation"
+        quadrant_num = 3
+        description = "Falling growth with rising inflation"
+        outperformers = "USD, commodities (non-precious metals)"
+        underperformers = "Equities, bonds"
+        strategy = "Defensive positioning. Volatility likely to spike. Reduce equity exposure."
+    else:  # not growth_rising and not inflation_rising
+        quadrant = "Quad 4: Risk-Off (Deflation)"
+        quadrant_num = 4
+        description = "Falling growth and falling inflation"
+        outperformers = "Safe-haven currencies, quality bonds"
+        underperformers = "Commodities, equities"
+        strategy = "Flight to safety. Favor treasuries and defensive assets."
+
+    # === BUILD DETAILED ANALYSIS ===
+    analysis_lines = []
+    analysis_lines.append("\n" + "="*140)
+    analysis_lines.append(f"{'MACRO ENVIRONMENT ANALYSIS -  FOUR-QUADRANT FRAMEWORK':^140}")
+    analysis_lines.append("="*140 + "\n")
+
+    analysis_lines.append(f"Current Quadrant: {quadrant}")
+    analysis_lines.append(f"Description: {description}\n")
+
+    analysis_lines.append("Signal Breakdown:")
+    analysis_lines.append(f"  Growth Signal: {growth_signal:+.2f} ({'Rising' if growth_rising else 'Falling'})")
+    analysis_lines.append(f"    - Equity Indices (S&P/Nasdaq/Russell): {equity_signal:+.2f}")
+    analysis_lines.append(f"    - Cyclical Commodities (Copper/Oil): {commodity_signal:+.2f}")
+    analysis_lines.append(f"  Inflation Signal: {inflation_signal:+.2f} ({'Rising' if inflation_rising else 'Falling'})")
+    analysis_lines.append(f"    - Treasury Yields (inverted): {bond_signal:+.2f}")
+    analysis_lines.append(f"    - Inflation Hedges (Gold/Silver/Oil): {commodity_inflation_signal:+.2f}\n")
+
+    # Key instrument scores
+    analysis_lines.append("Key Instrument Scores:")
+    key_instruments = {
+        'ESA Index': 'S&P 500 Futures',
+        'NQA Index': 'Nasdaq 100 Futures',
+        'TYA Comdty': '10Y Treasury',
+        'GCA Comdty': 'Gold',
+        'CLA Comdty': 'Crude Oil',
+        'DXY Index': 'US Dollar Index',
+    }
+
+    for ticker, name in key_instruments.items():
+        score = get_score(ticker)
+        avg_5d = get_avg_5d(ticker)
+        if not pd.isna(score):
+            sentiment, _ = classify_sentiment(score)
+            analysis_lines.append(f"  {name:<20} Score: {score:>6.1f}  (5D Avg: {avg_5d:>6.1f})  {sentiment}")
+        else:
+            analysis_lines.append(f"  {name:<20} Score: {'N/A':>6}  (5D Avg: {'N/A':>6})  N/A")
+
+    analysis_lines.append(f"\nAsset Class Outlook:")
+    analysis_lines.append(f"  Outperformers: {outperformers}")
+    analysis_lines.append(f"  Underperformers: {underperformers}")
+    analysis_lines.append(f"\nRecommended Strategy:")
+    analysis_lines.append(f"  {strategy}")
+
+    # Transition signals
+    analysis_lines.append(f"\nQuadrant Transition Watch:")
+    if quadrant_num == 1:
+        analysis_lines.append(f"  → Quad 2 (Reflation): Watch for stimulative policy and ISM acceleration")
+    elif quadrant_num == 2:
+        analysis_lines.append(f"  → Quad 3 (Stagflation): Monitor Fed tightening signals and yield spikes")
+    elif quadrant_num == 3:
+        analysis_lines.append(f"  → Quad 4 (Risk-Off): Look for economic weakness with persistent inflation")
+    else:
+        analysis_lines.append(f"  → Quad 1 (Goldilocks): Watch for policy accommodation and falling yields")
+
+    analysis_lines.append("\n" + "="*140)
+    analysis_lines.append("="*140 + "\n")
+
+    # Print analysis
+    for line in analysis_lines:
+        print(line)
+
+    return {
+        'quadrant': quadrant,
+        'quadrant_num': quadrant_num,
+        'growth_signal': growth_signal,
+        'growth_rising': growth_rising,
+        'inflation_signal': inflation_signal,
+        'inflation_rising': inflation_rising,
+        'description': description,
+        'outperformers': outperformers,
+        'underperformers': underperformers,
+        'strategy': strategy,
+    }
+
+
+# ============================================================================
+# GOLD-SPECIFIC REGIME ANALYSIS
+# ============================================================================
+
+def analyze_gold_regime(results_by_category):
+    """
+    Analyze gold-specific regime to detect structural demand that may override
+    standard macro framework signals.
+
+    Components:
+    1. ETF Flow Proxy: Gold price momentum as flow indicator
+    2. Correlation Breakdown: Gold vs DXY divergence detection
+    3. Safe Haven Index: Gold vs VIX behavior
+    4. De-Dollarization Proxy: Gold strength vs USD
+
+    Returns: Dictionary with gold regime analysis
+    """
+    # Extract all results
+    all_results = {}
+    for category, results in results_by_category.items():
+        for result in results:
+            all_results[result['ticker']] = result
+
+    def get_score(ticker):
+        return all_results.get(ticker, {}).get('current_score', np.nan)
+
+    def get_avg_5d(ticker):
+        return all_results.get(ticker, {}).get('avg_5d', np.nan)
+
+    def get_avg_20d(ticker):
+        return all_results.get(ticker, {}).get('avg_20d', np.nan)
+
+    # === COMPONENT 1: ETF FLOW PROXY (25%) ===
+    # Use gold score momentum as proxy for ETF flows
+    gold_score = get_score('GCA Comdty')
+    gold_avg_5d = get_avg_5d('GCA Comdty')
+    gold_avg_20d = get_avg_20d('GCA Comdty')
+
+    if not pd.isna(gold_score) and not pd.isna(gold_avg_5d):
+        # Strong momentum = strong flows
+        if gold_score > 4 and gold_avg_5d > 2:
+            etf_flow_score = 7.5
+            etf_flow_regime = 'strong_inflow'
+        elif gold_score > 2:
+            etf_flow_score = 4.0
+            etf_flow_regime = 'moderate_inflow'
+        elif gold_score > -2:
+            etf_flow_score = 0.0
+            etf_flow_regime = 'neutral'
+        elif gold_score > -4:
+            etf_flow_score = -4.0
+            etf_flow_regime = 'moderate_outflow'
+        else:
+            etf_flow_score = -7.5
+            etf_flow_regime = 'strong_outflow'
+
+        # Trend confirmation
+        if not pd.isna(gold_avg_20d):
+            if (gold_score > 0 and gold_avg_20d > 0) or (gold_score < 0 and gold_avg_20d < 0):
+                etf_flow_score *= 1.3  # Trend confirms
+    else:
+        etf_flow_score = 0
+        etf_flow_regime = 'no_data'
+
+    # === COMPONENT 2: CORRELATION BREAKDOWN (25%) ===
+    # Check if gold is moving independently of DXY
+    dxy_score = get_score('DXY Index')
+
+    if not pd.isna(gold_score) and not pd.isna(dxy_score):
+        # Normal: Gold inverse to DXY
+        # Breakdown: Both moving same direction or gold strong despite DXY strength
+        if gold_score > 2 and dxy_score > 0:
+            # Gold up despite dollar strength = structural demand
+            breakdown_score = 8.0
+            breakdown_regime = 'structural_demand'
+        elif gold_score > 2 and dxy_score < -2:
+            # Gold up with dollar weak = normal inverse
+            breakdown_score = 2.0
+            breakdown_regime = 'traditional'
+        elif gold_score < -2 and dxy_score < -2:
+            # Gold down despite dollar weakness = structural weakness
+            breakdown_score = -6.0
+            breakdown_regime = 'structural_weakness'
+        else:
+            breakdown_score = 0.0
+            breakdown_regime = 'traditional'
+    else:
+        breakdown_score = 0
+        breakdown_regime = 'no_data'
+
+    # === COMPONENT 3: SAFE HAVEN INDEX (25%) ===
+    # Compare gold behavior to other safe havens
+    treasury_score = get_score('TYA Comdty')  # 10Y Treasury
+    usdjpy_score = get_score('USDJPY Curncy')  # JPY (inverse)
+
+    safe_haven_components = []
+
+    if not pd.isna(gold_score):
+        # Gold/Treasury alignment
+        if not pd.isna(treasury_score):
+            if gold_score > 0 and treasury_score > 0:
+                safe_haven_components.append(3)  # Both bid = flight to safety
+            elif gold_score > 0 and treasury_score < 0:
+                safe_haven_components.append(2)  # Gold unique bid = structural
+            elif gold_score < 0 and treasury_score > 0:
+                safe_haven_components.append(-2)  # Gold lagging = weakness
+            else:
+                safe_haven_components.append(0)
+
+        # Gold/JPY alignment (USDJPY down = JPY strength)
+        if not pd.isna(usdjpy_score):
+            if gold_score > 0 and usdjpy_score < 0:
+                safe_haven_components.append(2)  # Both safe havens bid
+            elif gold_score > 0 and usdjpy_score > 0:
+                safe_haven_components.append(3)  # Gold up despite risk-on = structural
+            else:
+                safe_haven_components.append(0)
+
+    if safe_haven_components:
+        safe_haven_score = np.mean(safe_haven_components) * 2
+        if safe_haven_score > 4:
+            safe_haven_regime = 'structural_demand'
+        elif safe_haven_score > 1:
+            safe_haven_regime = 'fear_driven'
+        elif safe_haven_score > -2:
+            safe_haven_regime = 'neutral'
+        else:
+            safe_haven_regime = 'risk_on_headwind'
+    else:
+        safe_haven_score = 0
+        safe_haven_regime = 'no_data'
+
+    # === COMPONENT 4: DE-DOLLARIZATION PROXY (25%) ===
+    # Gold strength relative to broad USD strength
+    if not pd.isna(gold_score) and not pd.isna(dxy_score):
+        # Strong gold + Strong DXY = de-dollarization / central bank buying
+        gold_dxy_diff = gold_score - (-dxy_score)  # Expecting inverse relationship
+
+        if gold_dxy_diff > 6:
+            dedollar_score = 8.0
+            dedollar_regime = 'strong_structural_demand'
+        elif gold_dxy_diff > 3:
+            dedollar_score = 4.0
+            dedollar_regime = 'moderate_structural_demand'
+        elif gold_dxy_diff > -3:
+            dedollar_score = 0.0
+            dedollar_regime = 'traditional_dynamics'
+        else:
+            dedollar_score = -4.0
+            dedollar_regime = 'structural_weakness'
+    else:
+        dedollar_score = 0
+        dedollar_regime = 'no_data'
+
+    # === COMPOSITE GOLD REGIME SCORE ===
+    component_scores = [etf_flow_score, breakdown_score, safe_haven_score, dedollar_score]
+    valid_scores = [s for s in component_scores if s != 0 or True]  # Include all
+    gold_regime_score = np.mean(valid_scores) if valid_scores else 0
+
+    # Determine overall regime
+    if breakdown_regime == 'structural_demand' or dedollar_regime == 'strong_structural_demand':
+        gold_regime = 'structural'
+        framework_confidence = 0.3
+    elif breakdown_regime == 'structural_weakness':
+        gold_regime = 'structural_weakness'
+        framework_confidence = 0.5
+    elif etf_flow_regime in ['strong_inflow', 'moderate_inflow'] and gold_regime_score > 3:
+        gold_regime = 'transitional'
+        framework_confidence = 0.6
+    else:
+        gold_regime = 'traditional'
+        framework_confidence = 1.0
+
+    # Generate recommendation
+    if gold_regime == 'structural' and gold_regime_score > 3:
+        recommendation = {
+            'action': 'override_macro_bearish',
+            'description': 'Structural demand strong - override bearish macro signals',
+            'signal_adjustment': min(gold_regime_score * 0.5, 3),
+        }
+    elif gold_regime == 'structural_weakness' and gold_regime_score < -3:
+        recommendation = {
+            'action': 'confirm_weakness',
+            'description': 'Structural indicators confirm weakness',
+            'signal_adjustment': max(gold_regime_score * 0.3, -2),
+        }
+    else:
+        recommendation = {
+            'action': 'standard_framework',
+            'description': 'Use standard macro quadrant framework',
+            'signal_adjustment': 0,
+        }
+
+    result = {
+        'gold_regime_score': round(gold_regime_score, 2),
+        'gold_regime': gold_regime,
+        'framework_confidence': framework_confidence,
+        'recommendation': recommendation,
+        'component_scores': {
+            'etf_flow': {'score': round(etf_flow_score, 2), 'regime': etf_flow_regime},
+            'correlation_breakdown': {'score': round(breakdown_score, 2), 'regime': breakdown_regime},
+            'safe_haven': {'score': round(safe_haven_score, 2), 'regime': safe_haven_regime},
+            'dedollarization': {'score': round(dedollar_score, 2), 'regime': dedollar_regime},
+        },
+        'inputs': {
+            'gold_score': round(gold_score, 2) if not pd.isna(gold_score) else None,
+            'dxy_score': round(dxy_score, 2) if not pd.isna(dxy_score) else None,
+            'treasury_score': round(treasury_score, 2) if not pd.isna(treasury_score) else None,
+        }
+    }
+
+    # Print analysis
+    print("\n" + "="*140)
+    print(f"{'GOLD-SPECIFIC REGIME ANALYSIS':^140}")
+    print("="*140 + "\n")
+
+    print(f"Gold Regime: {gold_regime.upper()}")
+    print(f"Regime Score: {gold_regime_score:+.2f}")
+    print(f"Framework Confidence: {framework_confidence:.0%}")
+    print(f"\nRecommendation: {recommendation['action']}")
+    print(f"Description: {recommendation['description']}")
+
+    print(f"\nComponent Breakdown:")
+    print(f"  ETF Flow Proxy:        {etf_flow_score:+.2f}  ({etf_flow_regime})")
+    print(f"  Correlation Breakdown: {breakdown_score:+.2f}  ({breakdown_regime})")
+    print(f"  Safe Haven Index:      {safe_haven_score:+.2f}  ({safe_haven_regime})")
+    print(f"  De-Dollarization:      {dedollar_score:+.2f}  ({dedollar_regime})")
+
+    print(f"\nInput Scores:")
+    print(f"  Gold (GCA):    {gold_score:+.2f}" if not pd.isna(gold_score) else "  Gold: N/A")
+    print(f"  DXY Index:     {dxy_score:+.2f}" if not pd.isna(dxy_score) else "  DXY: N/A")
+    print(f"  10Y Treasury:  {treasury_score:+.2f}" if not pd.isna(treasury_score) else "  10Y Treasury: N/A")
+
+    print("\n" + "="*140)
+
+    return result
+
+# ============================================================================
+# REPORT GENERATION (PDF / IMAGE)
+# ============================================================================
+
+def generate_report(results_by_category, macro_analysis, gold_regime=None, output_path=None, format='pdf'):
+    """
+    Generate a professional PDF or image report for circulation.
+
+    Args:
+        results_by_category: Dict of category -> results list
+        macro_analysis: Dict from analyze_macro_quadrant()
+        gold_regime: Dict from analyze_gold_regime() (optional)
+        output_path: Output file path (default: auto-generated with timestamp)
+        format: 'pdf' or 'png'
+
+    Returns:
+        Path to generated file
+    """
+    # Set up the figure
+    fig = plt.figure(figsize=(16, 22))
+    fig.patch.set_facecolor('white')
+
+    # Title
+    fig.suptitle('Sentiment Report',
+                 fontsize=20, fontweight='bold', y=0.98)
+
+    # Timestamp
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    fig.text(0.5, 0.955, f'Generated: {timestamp}', ha='center', fontsize=10, style='italic')
+
+    # Create grid for subplots
+    gs = fig.add_gridspec(5, 2, hspace=0.4, wspace=0.3,
+                          left=0.05, right=0.95, top=0.93, bottom=0.02)
+
+    # === SECTION 1: MACRO QUADRANT (Top Left) ===
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.axis('off')
+
+    quadrant_colors = {1: '#2ECC71', 2: '#F39C12', 3: '#E74C3C', 4: '#3498DB'}
+    quad_num = macro_analysis.get('quadrant_num', 1)
+    quad_color = quadrant_colors.get(quad_num, '#95A5A6')
+
+    ax1.add_patch(mpatches.FancyBboxPatch((0.05, 0.3), 0.9, 0.6,
+                                           boxstyle="round,pad=0.02",
+                                           facecolor=quad_color, alpha=0.3,
+                                           edgecolor=quad_color, linewidth=2))
+
+    ax1.text(0.5, 0.75, 'MACRO ENVIRONMENT', ha='center', va='center',
+             fontsize=14, fontweight='bold')
+    ax1.text(0.5, 0.55, macro_analysis.get('quadrant', 'Unknown'),
+             ha='center', va='center', fontsize=12, fontweight='bold', color=quad_color)
+    ax1.text(0.5, 0.4, macro_analysis.get('description', ''),
+             ha='center', va='center', fontsize=10)
+
+    growth_txt = f"Growth: {macro_analysis.get('growth_signal', 0):+.2f} ({'↑' if macro_analysis.get('growth_rising') else '↓'})"
+    inflation_txt = f"Inflation: {macro_analysis.get('inflation_signal', 0):+.2f} ({'↑' if macro_analysis.get('inflation_rising') else '↓'})"
+    ax1.text(0.25, 0.15, growth_txt, ha='center', va='center', fontsize=10)
+    ax1.text(0.75, 0.15, inflation_txt, ha='center', va='center', fontsize=10)
+
+    ax1.set_xlim(0, 1)
+    ax1.set_ylim(0, 1)
+    ax1.set_title('Macro Quadrant Analysis', fontsize=12, fontweight='bold', pad=10)
+
+    # === SECTION 2: GOLD REGIME (Top Right) ===
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.axis('off')
+
+    if gold_regime:
+        regime_colors = {
+            'structural': '#FFD700',
+            'transitional': '#FFA500',
+            'traditional': '#C0C0C0',
+            'structural_weakness': '#CD5C5C'
+        }
+        g_regime = gold_regime.get('gold_regime', 'traditional')
+        g_color = regime_colors.get(g_regime, '#C0C0C0')
+
+        ax2.add_patch(mpatches.FancyBboxPatch((0.05, 0.3), 0.9, 0.6,
+                                               boxstyle="round,pad=0.02",
+                                               facecolor=g_color, alpha=0.3,
+                                               edgecolor=g_color, linewidth=2))
+
+        ax2.text(0.5, 0.75, 'GOLD REGIME', ha='center', va='center',
+                 fontsize=14, fontweight='bold')
+        ax2.text(0.5, 0.55, g_regime.upper().replace('_', ' '),
+                 ha='center', va='center', fontsize=12, fontweight='bold', color='#8B4513')
+
+        score_txt = f"Regime Score: {gold_regime.get('gold_regime_score', 0):+.2f}"
+        conf_txt = f"Framework Confidence: {gold_regime.get('framework_confidence', 1.0):.0%}"
+        ax2.text(0.5, 0.4, score_txt, ha='center', va='center', fontsize=10)
+        ax2.text(0.5, 0.25, conf_txt, ha='center', va='center', fontsize=10)
+
+        rec = gold_regime.get('recommendation', {})
+        ax2.text(0.5, 0.1, rec.get('action', '').replace('_', ' ').title(),
+                 ha='center', va='center', fontsize=9, style='italic')
+    else:
+        ax2.text(0.5, 0.5, 'Gold Regime Analysis\nNot Available',
+                 ha='center', va='center', fontsize=12)
+
+    ax2.set_xlim(0, 1)
+    ax2.set_ylim(0, 1)
+    ax2.set_title('Gold-Specific Regime', fontsize=12, fontweight='bold', pad=10)
+
+    # === SECTION 3: STRATEGY RECOMMENDATIONS ===
+    ax3 = fig.add_subplot(gs[1, :])
     ax3.axis('off')
 
-    # Labels
-    ax3.text(np.pi, 0.6, '0.0', ha='center', fontsize=10)
-    ax3.text(np.pi*0.75, 0.95, '0.4', ha='center', fontsize=10)
-    ax3.text(np.pi*0.5, 1.05, '0.6', ha='center', fontsize=10)
-    ax3.text(np.pi*0.25, 0.95, '0.8', ha='center', fontsize=10)
-    ax3.text(0, 0.6, '1.0', ha='center', fontsize=10)
+    strategy_text = f"""
+STRATEGY RECOMMENDATIONS
 
-    ax3.text(np.pi/2, 0.3, f'Degradation Ratio\n{degradation:.2f}',
-            ha='center', fontsize=14, fontweight='bold')
-    ax3.text(np.pi/2, 0.1, summary.get('interpretation', ''),
-            ha='center', fontsize=10, style='italic')
+Outperformers: {macro_analysis.get('outperformers', 'N/A')}
+Underperformers: {macro_analysis.get('underperformers', 'N/A')}
 
-    ax3.set_title('Walk-Forward Robustness', fontsize=12, fontweight='bold', y=1.1)
+Strategy: {macro_analysis.get('strategy', 'N/A')}
+"""
+    ax3.text(0.02, 0.9, strategy_text, transform=ax3.transAxes, fontsize=11,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.3))
 
-    # 4. Summary Statistics
+    # === SECTION 4-7: SCORE TABLES BY CATEGORY ===
+    categories = list(results_by_category.keys())
+    for idx, category in enumerate(categories[:4]):  # Max 4 categories
+        row = 2 + idx // 2
+        col = idx % 2
+        ax = fig.add_subplot(gs[row, col])
+
+        results = results_by_category[category]
+        if not results:
+            ax.text(0.5, 0.5, 'No Data', ha='center', va='center')
+            ax.set_title(category, fontsize=11, fontweight='bold')
+            ax.axis('off')
+            continue
+
+        # Sort by score
+        results_sorted = sorted(results,
+                               key=lambda x: x['current_score'] if not pd.isna(x['current_score']) else -999,
+                               reverse=True)[:10]  # Top 10
+
+        # Create table data
+        table_data = []
+        colors = []
+        for r in results_sorted:
+            ticker = get_display_name(r['ticker'])
+            score = r['current_score']
+            avg_5d = r['avg_5d']
+
+            if pd.isna(score):
+                score_str = 'N/A'
+                row_color = 'white'
+            else:
+                score_str = f'{score:+.1f}'
+                if score >= 4:
+                    row_color = '#90EE90'  # Light green
+                elif score <= -4:
+                    row_color = '#FFB6C1'  # Light red
+                else:
+                    row_color = 'white'
+
+            avg_str = f'{avg_5d:+.1f}' if not pd.isna(avg_5d) else 'N/A'
+            sentiment, _ = classify_sentiment(score)
+
+            table_data.append([ticker, score_str, avg_str, sentiment[:15]])
+            colors.append([row_color] * 4)
+
+        if table_data:
+            table = ax.table(cellText=table_data,
+                            colLabels=['Ticker', 'Score', '5D Avg', 'Sentiment'],
+                            cellColours=colors,
+                            loc='center',
+                            cellLoc='center')
+            table.auto_set_font_size(False)
+            table.set_fontsize(8)
+            table.scale(1.2, 1.5)
+
+            # Style header
+            for j in range(4):
+                table[(0, j)].set_facecolor('#4A90D9')
+                table[(0, j)].set_text_props(color='white', fontweight='bold')
+
+        ax.set_title(category, fontsize=11, fontweight='bold')
+        ax.axis('off')
+
+    # === FOOTER ===
+    fig.text(0.5, 0.01, 'Sentiment Analysis  | Confidential',
+             ha='center', fontsize=8, style='italic', color='gray')
+
+    # Generate output path if not provided
+    if output_path is None:
+        timestamp_file = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f'CCS_Report_{timestamp_file}.{format}'
+
+    # Save figure
+    if format.lower() == 'pdf':
+        with PdfPages(output_path) as pdf:
+            pdf.savefig(fig, bbox_inches='tight', dpi=150)
+    else:
+        plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+
+    plt.close(fig)
+
+    print(f"\n{'='*80}")
+    print(f"Report generated: {output_path}")
+    print(f"{'='*80}\n")
+
+    return output_path
+
+
+def generate_gold_regime_chart(gold_regime, output_path=None):
+    """
+    Generate a focused gold regime analysis chart.
+
+    Args:
+        gold_regime: Dict from analyze_gold_regime()
+        output_path: Output file path
+
+    Returns:
+        Path to generated file
+    """
+    if gold_regime is None:
+        print("No gold regime data available")
+        return None
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig.suptitle('Gold-Specific Regime Analysis', fontsize=16, fontweight='bold')
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    fig.text(0.5, 0.95, f'Generated: {timestamp}', ha='center', fontsize=10, style='italic')
+
+    components = gold_regime.get('component_scores', {})
+
+    # Component scores bar chart
+    ax1 = axes[0, 0]
+    comp_names = ['ETF Flow', 'Corr. Breakdown', 'Safe Haven', 'De-Dollar']
+    comp_scores = [
+        components.get('etf_flow', {}).get('score', 0),
+        components.get('correlation_breakdown', {}).get('score', 0),
+        components.get('safe_haven', {}).get('score', 0),
+        components.get('dedollarization', {}).get('score', 0),
+    ]
+    colors = ['#2ECC71' if s > 0 else '#E74C3C' for s in comp_scores]
+
+    bars = ax1.barh(comp_names, comp_scores, color=colors, alpha=0.7)
+    ax1.axvline(x=0, color='black', linewidth=0.5)
+    ax1.set_xlim(-10, 10)
+    ax1.set_xlabel('Score')
+    ax1.set_title('Component Scores', fontweight='bold')
+
+    for bar, score in zip(bars, comp_scores):
+        ax1.text(score + 0.3 if score >= 0 else score - 0.3,
+                 bar.get_y() + bar.get_height()/2,
+                 f'{score:+.1f}', va='center', fontsize=9)
+
+    # Regime indicator
+    ax2 = axes[0, 1]
+    ax2.axis('off')
+
+    regime = gold_regime.get('gold_regime', 'unknown')
+    regime_score = gold_regime.get('gold_regime_score', 0)
+    confidence = gold_regime.get('framework_confidence', 1.0)
+
+    regime_colors = {
+        'structural': '#FFD700',
+        'transitional': '#FFA500',
+        'traditional': '#C0C0C0',
+        'structural_weakness': '#CD5C5C'
+    }
+    color = regime_colors.get(regime, '#808080')
+
+    circle = plt.Circle((0.5, 0.6), 0.3, color=color, alpha=0.5)
+    ax2.add_patch(circle)
+    ax2.text(0.5, 0.6, regime.upper().replace('_', '\n'),
+             ha='center', va='center', fontsize=14, fontweight='bold')
+    ax2.text(0.5, 0.2, f'Score: {regime_score:+.2f}\nConfidence: {confidence:.0%}',
+             ha='center', va='center', fontsize=11)
+    ax2.set_xlim(0, 1)
+    ax2.set_ylim(0, 1)
+    ax2.set_title('Current Regime', fontweight='bold')
+
+    # Input values
+    ax3 = axes[1, 0]
+    ax3.axis('off')
+
+    inputs = gold_regime.get('inputs', {})
+    input_text = f"""
+INPUT SCORES
+
+Gold (GCA):      {inputs.get('gold_score', 'N/A')}
+DXY Index:       {inputs.get('dxy_score', 'N/A')}
+10Y Treasury:    {inputs.get('treasury_score', 'N/A')}
+"""
+    ax3.text(0.1, 0.8, input_text, transform=ax3.transAxes, fontsize=12,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.5))
+    ax3.set_title('Market Inputs', fontweight='bold')
+
+    # Recommendation
     ax4 = axes[1, 1]
     ax4.axis('off')
 
-    summary_text = f"""
-    WALK-FORWARD SUMMARY
-    {'='*35}
+    rec = gold_regime.get('recommendation', {})
+    rec_text = f"""
+RECOMMENDATION
 
-    Windows Analyzed: {summary.get('num_windows', 0)}
+Action: {rec.get('action', 'N/A').replace('_', ' ').title()}
 
-    In-Sample Performance:
-      Avg Sharpe: {summary.get('avg_is_sharpe', 0):.2f}
-      Avg Return: {summary.get('avg_is_return', 0):.1f}%
+{rec.get('description', '')}
 
-    Out-of-Sample Performance:
-      Avg Sharpe: {summary.get('avg_oos_sharpe', 0):.2f}
-      Avg Return: {summary.get('avg_oos_return', 0):.1f}%
+Signal Adjustment: {rec.get('signal_adjustment', 0):+.2f}
+"""
+    rec_color = '#90EE90' if rec.get('signal_adjustment', 0) > 0 else '#FFB6C1' if rec.get('signal_adjustment', 0) < 0 else 'lightgray'
+    ax4.text(0.1, 0.8, rec_text, transform=ax4.transAxes, fontsize=11,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor=rec_color, alpha=0.3))
+    ax4.set_title('Action Recommendation', fontweight='bold')
 
-    Degradation Ratio: {summary.get('degradation_ratio', 0):.2f}
+    plt.tight_layout(rect=[0, 0.02, 1, 0.93])
 
-    Interpretation:
-    {summary.get('interpretation', 'N/A')}
+    # Save
+    if output_path is None:
+        timestamp_file = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f'Gold_Regime_{timestamp_file}.png'
 
-    {'='*35}
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    plt.close(fig)
 
-    Degradation Guide:
-    > 0.8: Excellent (robust)
-    0.6-0.8: Good (minor overfit)
-    0.4-0.6: Concerning (significant overfit)
-    < 0.4: Poor (likely overfit)
+    print(f"Gold regime chart saved: {output_path}")
+    return output_path
+
+
+# ============================================================================
+# MAIN SCANNER
+# ===========================================================================
+
+
+def run_ccs_scan(generate_pdf=False, generate_png=False, output_dir=None):
     """
-
-    ax4.text(0.1, 0.95, summary_text, fontsize=10, family='monospace',
-             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-    plt.suptitle('Walk-Forward Optimization Analysis', fontsize=14, fontweight='bold', y=1.02)
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Chart saved to: {save_path}")
-
-    return fig
-
-
-def plot_parameter_sensitivity(
-    sensitivity_df: pd.DataFrame,
-    param_name: str,
-    figsize: Tuple[int, int] = (12, 8),
-    save_path: str = None
-) -> plt.Figure:
-    """
-    Plot parameter sensitivity analysis results.
-
-    Shows how performance metrics change with parameter values.
+    Execute full CCS scan across all instruments.
 
     Args:
-        sensitivity_df: DataFrame from run_parameter_sensitivity
-        param_name: Name of the parameter being tested
-        figsize: Figure size
-        save_path: Optional path to save the figure
+        generate_pdf: If True, generate a PDF report
+        generate_png: If True, generate a PNG image report
+        output_dir: Directory for output files (default: current directory)
 
     Returns:
-        matplotlib Figure object
+        Dictionary with results, macro analysis, gold regime, and report paths
     """
-    if sensitivity_df is None or len(sensitivity_df) == 0:
-        print("No sensitivity data to plot")
-        return None
 
-    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    print("\n" + "="*80)
+    print("Sentiment Report")
+    print("Initializing BQL connection and fetching data...")
+    print("="*80)
 
-    param_values = sensitivity_df['param_value'].values
+    results_by_category = {}
 
-    # 1. Sharpe Ratio vs Parameter
-    ax1 = axes[0, 0]
-    ax1.plot(param_values, sensitivity_df['sharpe_ratio'], marker='o', color='navy', linewidth=2)
-    ax1.fill_between(param_values, sensitivity_df['sharpe_ratio'], alpha=0.2)
-    ax1.set_xlabel(param_name, fontsize=10)
-    ax1.set_ylabel('Sharpe Ratio', fontsize=10)
-    ax1.set_title('Sharpe Ratio Sensitivity', fontsize=12, fontweight='bold')
-    ax1.grid(True, alpha=0.3)
+    for category, tickers in TICKERS.items():
+        print(f"\nProcessing {category}... ({len(tickers)} instruments)")
+        results = []
 
-    # 2. Total Return vs Parameter
-    ax2 = axes[0, 1]
-    ax2.plot(param_values, sensitivity_df['total_return_pct'], marker='s', color='green', linewidth=2)
-    ax2.fill_between(param_values, sensitivity_df['total_return_pct'], alpha=0.2, color='green')
-    ax2.set_xlabel(param_name, fontsize=10)
-    ax2.set_ylabel('Total Return (%)', fontsize=10)
-    ax2.set_title('Return Sensitivity', fontsize=12, fontweight='bold')
-    ax2.grid(True, alpha=0.3)
+        for ticker in tickers:
+            try:
+                df = calculate_scores_for_ticker(ticker)
+                if df is None:
+                    continue
 
-    # 3. Max Drawdown vs Parameter
-    ax3 = axes[1, 0]
-    ax3.plot(param_values, sensitivity_df['max_drawdown_pct'], marker='^', color='red', linewidth=2)
-    ax3.fill_between(param_values, sensitivity_df['max_drawdown_pct'], alpha=0.2, color='red')
-    ax3.set_xlabel(param_name, fontsize=10)
-    ax3.set_ylabel('Max Drawdown (%)', fontsize=10)
-    ax3.set_title('Drawdown Sensitivity', fontsize=12, fontweight='bold')
-    ax3.grid(True, alpha=0.3)
-    ax3.invert_yaxis()  # Lower drawdown is better
+                # Extract scores
+                current_score = df['Score_EMA'].iloc[-1] if len(df) > 0 else np.nan
+                d_minus_1 = df['Score_EMA'].iloc[-2] if len(df) > 1 else np.nan
+                d_minus_2 = df['Score_EMA'].iloc[-3] if len(df) > 2 else np.nan
+                d_minus_3 = df['Score_EMA'].iloc[-4] if len(df) > 3 else np.nan
+                d_minus_4 = df['Score_EMA'].iloc[-5] if len(df) > 4 else np.nan
 
-    # 4. Win Rate vs Parameter
-    ax4 = axes[1, 1]
-    ax4.plot(param_values, sensitivity_df['win_rate_pct'], marker='d', color='purple', linewidth=2)
-    ax4.fill_between(param_values, sensitivity_df['win_rate_pct'], alpha=0.2, color='purple')
-    ax4.axhline(y=50, color='gray', linestyle='--', alpha=0.5)
-    ax4.set_xlabel(param_name, fontsize=10)
-    ax4.set_ylabel('Win Rate (%)', fontsize=10)
-    ax4.set_title('Win Rate Sensitivity', fontsize=12, fontweight='bold')
-    ax4.grid(True, alpha=0.3)
+                # Calculate averages
+                avg_5d = df['Score_EMA'].iloc[-5:].mean() if len(df) >= 5 else np.nan
+                avg_10d = df['Score_EMA'].iloc[-10:].mean() if len(df) >= 10 else np.nan
+                avg_20d = df['Score_EMA'].iloc[-20:].mean() if len(df) >= 20 else np.nan
 
-    plt.suptitle(f'Parameter Sensitivity Analysis: {param_name}', fontsize=14, fontweight='bold', y=1.02)
-    plt.tight_layout()
+                results.append({
+                    'ticker': ticker,
+                    'current_score': current_score,
+                    'd_minus_1': d_minus_1,
+                    'd_minus_2': d_minus_2,
+                    'd_minus_3': d_minus_3,
+                    'd_minus_4': d_minus_4,
+                    'avg_5d': avg_5d,
+                    'avg_10d': avg_10d,
+                    'avg_20d': avg_20d,
+                })
 
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Chart saved to: {save_path}")
+                print(f"  ✓ {get_display_name(ticker)}")
 
-    return fig
+            except Exception as e:
+                print(f"  ✗ {get_display_name(ticker)}: {e}")
 
+        results_by_category[category] = results
 
-def plot_all_backtest_charts(
-    result: Dict,
-    wf_result: Dict = None,
-    save_dir: str = None
-) -> Dict[str, plt.Figure]:
-    """
-    Generate all backtest analysis charts.
+    # Print results
+    print_results(results_by_category)
 
-    Convenience function that generates:
-    - Equity curve with drawdown
-    - Trade analysis dashboard
-    - Walk-forward results (if provided)
+    # Macro quadrant analysis
+    macro_analysis = analyze_macro_quadrant(results_by_category)
 
-    Args:
-        result: Backtest result dictionary
-        wf_result: Optional walk-forward result dictionary
-        save_dir: Optional directory to save all charts
+    # Gold-specific regime analysis
+    gold_regime = analyze_gold_regime(results_by_category)
 
-    Returns:
-        Dict of figure names to Figure objects
-    """
-    figures = {}
+    # Generate reports if requested
+    report_paths = {}
 
-    print("Generating backtest analysis charts...")
+    if generate_pdf or generate_png:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-    # 1. Equity Curve
-    print("  - Generating equity curve...")
-    save_path = f"{save_dir}/equity_curve.png" if save_dir else None
-    figures['equity_curve'] = plot_equity_curve(result, save_path=save_path)
+        # Determine output directory
+        if output_dir is None:
+            output_dir = os.getcwd()
+        else:
+            os.makedirs(output_dir, exist_ok=True)
 
-    # 2. Trade Analysis
-    print("  - Generating trade analysis...")
-    save_path = f"{save_dir}/trade_analysis.png" if save_dir else None
-    figures['trade_analysis'] = plot_trade_analysis(result, save_path=save_path)
+        if generate_pdf:
+            pdf_path = os.path.join(output_dir, f'CCS_Report_{timestamp}.pdf')
+            report_paths['pdf'] = generate_report(
+                results_by_category, macro_analysis, gold_regime,
+                output_path=pdf_path, format='pdf'
+            )
 
-    # 3. Walk-Forward Results (if provided)
-    if wf_result:
-        print("  - Generating walk-forward analysis...")
-        save_path = f"{save_dir}/walk_forward.png" if save_dir else None
-        figures['walk_forward'] = plot_walk_forward_results(wf_result, save_path=save_path)
+        if generate_png:
+            png_path = os.path.join(output_dir, f'CCS_Report_{timestamp}.png')
+            report_paths['png'] = generate_report(
+                results_by_category, macro_analysis, gold_regime,
+                output_path=png_path, format='png'
+            )
 
-    print(f"Generated {len(figures)} charts")
+            # Also generate focused gold regime chart
+            gold_chart_path = os.path.join(output_dir, f'Gold_Regime_{timestamp}.png')
+            report_paths['gold_chart'] = generate_gold_regime_chart(
+                gold_regime, output_path=gold_chart_path
+            )
 
-    return figures
+    print("\n" + "="*80)
+    print(f"Scan complete! Processed {sum(len(r) for r in results_by_category.values())} instruments")
+    if report_paths:
+        print(f"Reports generated: {', '.join(report_paths.keys())}")
+    print("="*80 + "\n")
+
+    return {
+        'results_by_category': results_by_category,
+        'macro_analysis': macro_analysis,
+        'gold_regime': gold_regime,
+        'report_paths': report_paths,
+    }
 
 
 # ============================================================================
 # ENTRY POINT
 # ============================================================================
-
 if __name__ == "__main__":
-    print("Backtest Engine - Testing")
-    print("="*50)
+    import sys
 
-    # Run basic backtest
-    engine = CommodityBacktest()
+    # Parse command line arguments
+    generate_pdf = '--pdf' in sys.argv or '-p' in sys.argv
+    generate_png = '--png' in sys.argv or '-i' in sys.argv
+    generate_both = '--report' in sys.argv or '-r' in sys.argv
 
-    # Use recent 2 years
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+    if generate_both:
+        generate_pdf = True
+        generate_png = True
 
-    print(f"\nRunning backtest from {start_date} to {end_date}")
+    # Check for output directory argument
+    output_dir = None
+    for i, arg in enumerate(sys.argv):
+        if arg in ['--output', '-o'] and i + 1 < len(sys.argv):
+            output_dir = sys.argv[i + 1]
 
-    result = engine.run_backtest(
-        start_date=start_date,
-        end_date=end_date,
-        commodities=['GCA Comdty', 'SIA Comdty', 'CLA Comdty']  # Gold, Silver, Oil
+    # Run scanner
+    results = run_ccs_scan(
+        generate_pdf=generate_pdf,
+        generate_png=generate_png,
+        output_dir=output_dir
     )
 
-    # Print report
-    print_backtest_report(result)
-    print_trade_log(result.get('trades', []))
-
-    # Run walk-forward analysis
-    print("\n" + "="*50)
-    print("Running Walk-Forward Analysis")
-    print("="*50)
-
-    wf_optimizer = WalkForwardOptimizer(
-        in_sample_months=12,
-        out_of_sample_months=3
-    )
-
-    wf_result = wf_optimizer.run_walk_forward(
-        start_date=start_date,
-        end_date=end_date,
-        commodities=['GCA Comdty', 'CLA Comdty']
-    )
-
-
----------------------------------------------------------------------------
-ModuleNotFoundError                       Traceback (most recent call last)
-Input In [3], in <cell line: 1505>()
-   1514 start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-   1516 print(f"\nRunning backtest from {start_date} to {end_date}")
--> 1518 result = engine.run_backtest(
-   1519     start_date=start_date,
-   1520     end_date=end_date,
-   1521     commodities=['GCA Comdty', 'SIA Comdty', 'CLA Comdty']  # Gold, Silver, Oil
-   1522 )
-   1524 # Print report
-   1525 print_backtest_report(result)
-
-Input In [3], in CommodityBacktest.run_backtest(self, start_date, end_date, commodities, signal_generator)
-    454 historical_df = df[df['Date'] <= current_date.strftime('%Y-%m-%d')]
-    456 if len(historical_df) >= 20:
-    457     # Calculate signal based on latest data
---> 458     from commodity_signals import calculate_sentiment_score
-    459     signal = calculate_sentiment_score(historical_df.iloc[-1])
-    460     current_signals[ticker] = signal
-
-File /opt/bqplatform/lib/python3.9/site-packages/bqimports/bq_importer.py:104, in BQImporter.import_override(self, name, globals, locals, fromlist, level)
-     65 """Replace the built-in `__import__` function.
-     66 
-     67 Parameters
-   (...)
-     98 in the `_import_error_exception_handler` method in utils.py.
-     99 """
-    100 # Call the original __import__ function
-    101 # import = find + load
-    102 # This is necessary to call outside of try block to handle ImportError
-    103 # of relative imports in __init__.py files of some packages
---> 104 result = self._original_import(
-    105     name,
-    106     globals,
-    107     locals,
-    108     fromlist,
-    109     level,
-    110 )
-    112 # Attempt to log the module's payload without showing errors
-    113 # to the user
-    114 try:
-    115     # Store the name of module and the import result as tuple
-    116     # For example:
-    117     # import yaml
-    118     #     ==> success: ("yaml", 1)
-    119     #     ==> failure: ("yaml", 0)
-
-ModuleNotFoundError: No module named 'commodity_signals'
+    # Print usage hint if no reports requested
+    if not (generate_pdf or generate_png):
+        print("Tip: Run with --pdf, --png, or --report (-r) to generate reports")
+        print("     Use --output (-o) <dir> to specify output directory")
+#if __name__ == "__main__":
+    #run_ccs_scan()
