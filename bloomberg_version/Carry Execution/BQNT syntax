@@ -1,0 +1,327 @@
+# Save this comprehensive BQL and BQuant reference
+bql_reference = '''
+# Bloomberg Query Language (BQL) and BQuant Environment Reference
+
+## BQuant Environment Overview
+
+BQuant is Bloomberg's Python-based quantitative research platform that provides:
+- Jupyter notebook environment with pre-installed financial libraries
+- Direct access to Bloomberg data through BQL (Bloomberg Query Language)
+- Integration with pandas, numpy, matplotlib, and other data science tools
+- Real-time and historical market data access
+- Built-in financial analytics and modeling capabilities
+
+## BQL (Bloomberg Query Language) Syntax Reference
+
+### 1. Basic BQL Structure
+
+# Save this comprehensive BQL and BQuant reference
+bql_reference = '''
+# Bloomberg Query Language (BQL) and BQuant Environment Reference
+
+## BQuant Environment Overview
+
+BQuant is Bloomberg's Python-based quantitative research platform that provides:
+- Jupyter notebook environment with pre-installed financial libraries
+- Direct access to Bloomberg data through BQL (Bloomberg Query Language)
+- Integration with pandas, numpy, matplotlib, and other data science tools
+- Real-time and historical market data access
+- Built-in financial analytics and modeling capabilities
+
+## BQL (Bloomberg Query Language) Syntax Reference
+
+### 1. Basic BQL Structure
+get([fields]) for([universe]) with([parameters])
+
+
+### 2. Core Components
+
+#### Fields
+- Data points you want to retrieve
+- Examples: PX_LAST, PX_VOLUME, MARKET_CAP, PE_RATIO
+- Can be single field or list: ['PX_LAST', 'PX_VOLUME']
+
+#### Universe
+- Securities or instruments to query
+- Examples: 
+  - Single security: "AAPL US Equity"
+  - Multiple securities: ["AAPL US Equity", "MSFT US Equity"]
+  - Index members: members("SPX Index")
+  - Custom universe: universe("My Custom Universe")
+
+#### Parameters (WITH clause)
+- Modifiers for the query
+- Common parameters:
+  - dates: range('2023-01-01', '2023-12-31')
+  - currency: currency='USD'
+  - fill: fill='prev' (forward fill missing data)
+  - frq: frq='D' (daily frequency)
+
+### 3. BQL Syntax Examples
+
+#### Basic Price Query
+```bql
+get('PX_LAST') for('AAPL US Equity')
+Multiple Fields and Securities
+get(['PX_LAST', 'PX_VOLUME', 'MARKET_CAP']) 
+for(['AAPL US Equity', 'MSFT US Equity', 'GOOGL US Equity'])
+Historical Data with Date Range
+get('PX_LAST') 
+for('AAPL US Equity') 
+with(dates=range('2023-01-01', '2023-12-31'), frq='D')
+Index Members Query
+get(['PX_LAST', 'MARKET_CAP']) 
+for(members('SPX Index')) 
+with(dates='2023-12-31')
+Fundamental Data
+get(['PE_RATIO', 'PX_TO_BOOK_RATIO', 'RETURN_ON_EQUITY']) 
+for(['AAPL US Equity', 'MSFT US Equity'])
+Corporate Actions
+get(['DVD_HIST_ALL', 'SPLIT_HIST_ALL']) 
+for('AAPL US Equity') 
+with(dates=range('2020-01-01', '2023-12-31'))
+4. Advanced BQL Features
+Calculated Fields
+get([
+    'PX_LAST',
+    'PX_LAST' / lag('PX_LAST', 1) - 1 as 'Daily_Return'
+]) 
+for('AAPL US Equity') 
+with(dates=range('2023-01-01', '2023-12-31'), frq='D')
+Aggregations
+get([
+    avg('PX_LAST') as 'Avg_Price',
+    max('PX_LAST') as 'Max_Price',
+    min('PX_LAST') as 'Min_Price'
+]) 
+for('AAPL US Equity') 
+with(dates=range('2023-01-01', '2023-12-31'), frq='M')
+Filtering
+get(['NAME', 'PX_LAST', 'MARKET_CAP']) 
+for(filter(members('SPX Index'), 'MARKET_CAP' > 100000000000))
+5. Common BQL Functions
+Date Functions
+range('start_date', 'end_date'): Date range
+today(): Current date
+lag(field, periods): Lagged values
+lead(field, periods): Forward values
+Mathematical Functions
+avg(), sum(), max(), min(): Aggregation functions
+abs(): Absolute value
+sqrt(): Square root
+log(): Natural logarithm
+String Functions
+concat(): Concatenate strings
+upper(), lower(): Case conversion
+substring(): Extract substring
+Conditional Functions
+if(condition, true_value, false_value): Conditional logic
+case when condition then value else other_value end: Case statements
+6. Data Types and Formats
+Security Identifiers
+Equity: "AAPL US Equity"
+Index: "SPX Index"
+Currency: "EURUSD Curncy"
+Government Bond: "T 10Y Govt"
+Corporate Bond: "IBM 4.25 05/15/49 Corp"
+Commodity: "CL1 Comdty"
+Date Formats
+'YYYY-MM-DD': '2023-12-31'
+'MM/DD/YYYY': '12/31/2023'
+Relative: today(), today()-30
+Frequency Codes
+'D': Daily
+'W': Weekly
+'M': Monthly
+'Q': Quarterly
+'Y': Yearly
+7. BQuant Python Integration
+Basic BQL Execution
+import bql
+
+# Initialize BQL service
+bq = bql.Service()
+
+# Execute query
+bql_query = """
+get('PX_LAST') for('AAPL US Equity')
+"""
+response = bq.execute(bql_query)
+data = response[0].df()
+Error Handling
+try:
+    response = bq.execute(bql_query)
+    if response[0].has_data():
+        data = response[0].df()
+    else:
+        print("No data returned")
+except Exception as e:
+    print(f"BQL Error: {e}")
+8. Performance Optimization
+Best Practices
+Use specific date ranges instead of open-ended queries
+Limit universe size when possible
+Use appropriate frequency (don't request daily when monthly suffices)
+Cache results for repeated analysis
+Use bulk queries instead of multiple single-security queries
+Efficient Querying
+# Good: Single bulk query
+bql_query = """
+get(['PX_LAST', 'PX_VOLUME']) 
+for(['AAPL US Equity', 'MSFT US Equity', 'GOOGL US Equity'])
+with(dates=range('2023-01-01', '2023-12-31'))
+"""
+
+# Avoid: Multiple individual queries
+# for ticker in tickers:
+#     get('PX_LAST') for(ticker)
+9. Common Field Categories
+Price and Volume
+PX_LAST: Last price
+PX_OPEN: Opening price
+PX_HIGH: High price
+PX_LOW: Low price
+PX_VOLUME: Volume
+VWAP: Volume weighted average price
+Market Data
+MARKET_CAP: Market capitalization
+SHARES_OUT: Shares outstanding
+FREE_FLOAT_MKT_CAP: Free float market cap
+BETA: Beta coefficient
+Fundamental Data
+PE_RATIO: Price-to-earnings ratio
+PX_TO_BOOK_RATIO: Price-to-book ratio
+RETURN_ON_EQUITY: Return on equity
+DEBT_TO_EQUITY: Debt-to-equity ratio
+EBITDA: Earnings before interest, taxes, depreciation, amortization
+Corporate Actions
+DVD_HIST_ALL: Dividend history
+SPLIT_HIST_ALL: Stock split history
+SPIN_OFF_HIST_ALL: Spin-off history
+10. Error Handling and Debugging
+Common Errors
+Invalid security identifier
+Field not available for security
+Date range issues
+Syntax errors in BQL
+Debugging Tips
+Test queries with single securities first
+Verify field availability using FLDS function
+Check security identifier format
+Use smaller date ranges for testing
+11. BQuant Environment Specifics
+Available Libraries
+pandas: Data manipulation
+numpy: Numerical computing
+matplotlib/seaborn: Visualization
+scipy: Scientific computing
+sklearn: Machine learning
+bql: Bloomberg Query Language interface
+File System
+Persistent storage for notebooks and data
+Ability to save/load custom datasets
+Integration with Bloomberg data feeds
+Computational Resources
+High-performance computing environment
+Parallel processing capabilities
+Large memory allocation for big datasets
+This reference covers the essential BQL syntax and BQuant environment structure for LLM training or reference purposes. '''
+
+Save to file
+with open('./bql_bquant_reference.md', 'w') as f: f.write(bql_reference)
+
+print("BQL and BQuant reference saved to 'bql_bquant_reference.md'") print("\nYou can now:") print("1. Use this file to train/prompt an LLM about BQL syntax") print("2. Reference it for your own development") print("3. Share it with team members") print("4. Extend it with your specific use cases")
+
+
+## Additional Context for LLM Training:
+
+```python
+# Additional context that might be helpful for LLM training
+additional_context = '''
+## Additional Context for LLM Understanding
+
+### BQL vs SQL Differences
+- BQL is domain-specific for financial data
+- No JOIN operations (data is pre-joined by Bloomberg)
+- Built-in financial functions and calculations
+- Automatic handling of corporate actions and adjustments
+- Time-series aware operations
+
+### Data Quality and Adjustments
+- Bloomberg automatically adjusts for splits, dividends
+- Missing data handling through fill parameters
+- Currency conversion capabilities
+- Point-in-time data integrity
+
+### Security Master Integration
+- Automatic security identification and validation
+- Historical security changes tracked
+- Corporate action adjustments applied automatically
+- Multiple identifier types supported (ISIN, CUSIP, Ticker, etc.)
+
+### Real-time vs Historical Data
+- Historical data: Stored and adjusted
+- Real-time data: Live market feeds
+- Intraday data: Tick-by-tick or aggregated
+- End-of-day data: Official closing values
+
+### Compliance and Licensing
+- Data usage governed by Bloomberg licensing
+- Redistribution restrictions apply
+- Audit trails maintained
+- User access controls enforced
+'''
+
+with open('./bql_additional_context.md', 'w') as f:
+    f.write(additional_context)
+
+print("Additional context saved to 'bql_additional_context.md'")
+Example Prompts for LLM:
+example_prompts = '''
+## Example Prompts for LLM Training
+
+### Prompt 1: Basic Query Generation
+"Generate a BQL query to get the last price and volume for Apple stock for the past 30 days"
+
+Expected Response:
+```bql
+get(['PX_LAST', 'PX_VOLUME']) 
+for('AAPL US Equity') 
+with(dates=range(today()-30, today()), frq='D')
+Prompt 2: Complex Analysis
+"Create a BQL query to calculate the 30-day moving average of closing prices for all S&P 500 stocks"
+
+Expected Response:
+
+get([
+    'PX_LAST',
+    mavg('PX_LAST', 30) as 'MA_30'
+]) 
+for(members('SPX Index')) 
+with(dates=range(today()-60, today()), frq='D')
+Prompt 3: Fundamental Screening
+"Write a BQL query to find all stocks in the S&P 500 with P/E ratio less than 15 and market cap greater than $10 billion"
+
+Expected Response:
+
+get(['NAME', 'PX_LAST', 'PE_RATIO', 'MARKET_CAP']) 
+for(filter(members('SPX Index'), 'PE_RATIO' < 15 and 'MARKET_CAP' > 10000000000))
+'''
+
+with open('./bql_example_prompts.md', 'w') as f: f.write(example_prompts)
+
+print("Example prompts saved to 'bql_example_prompts.md'") print("\nAll reference files created! You now have:") print("1. bql_bquant_reference.md - Main syntax reference") print("2. bql_additional_context.md - Additional context") print("3. bql_example_prompts.md - Training examples")
+
+
+These files provide a comprehensive reference that you can feed to an LLM to help it understand BQL syntax and the BQuant environment. The reference covers:
+
+- **Complete BQL syntax** with examples
+- **BQuant environment structure** and capabilities
+- **Best practices** and optimization tips
+- **Common patterns** and use cases
+- **Error handling** and debugging
+- **Integration with Python** and pandas
+- **Example prompts** for training
+
+You can use these files to train an LLM or as reference documentation for your development work!
+
