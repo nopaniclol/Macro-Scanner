@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Generated outputs
+outputs/
+
+# Environment
+.env
+.venv/
+*.log
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Data files (large/sensitive)
+*.parquet
+*.h5

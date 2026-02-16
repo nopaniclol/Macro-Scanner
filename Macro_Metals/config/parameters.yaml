@@ -1,0 +1,294 @@
+# config/parameters.yaml
+# =============================================================================
+# Macro Metals System — Full Parameter Configuration
+# Reference: macro_metals_system_memory.md §§1–7
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Global
+# -----------------------------------------------------------------------------
+global:
+  base_currency: USD
+  freq: daily
+  timezone: US/Eastern
+
+  # Backtest sample periods (§6.1)
+  in_sample_start: "2015-01-01"
+  in_sample_end: "2022-12-31"
+  out_of_sample_start: "2023-01-01"
+  out_of_sample_end: "2026-02-15"
+
+  stress_periods:
+    - label: COVID
+      start: "2020-03-01"
+      end: "2020-04-30"
+    - label: Russia-Ukraine
+      start: "2022-02-20"
+      end: "2022-04-30"
+    - label: SVB
+      start: "2023-03-01"
+      end: "2023-04-15"
+
+  # Volatility targeting (§4.1)
+  target_portfolio_vol_annual: 0.10
+  vol_lookback_days: 30
+  vol_decay_lambda: 0.94
+  vol_cap_multiplier: 2.0              # hard cap at 2× target size
+
+  # Portfolio-level leverage limits (§4.3)
+  max_gross_leverage: 4.0              # 400% of capital
+  max_gold_delta_pct_nav: 1.5          # ±150% of capital
+
+# -----------------------------------------------------------------------------
+# Risk budgets (§4.2) — fractions must sum to 1.0
+# -----------------------------------------------------------------------------
+risk_budgets:
+  momentum: 0.30
+  carry: 0.25
+  relative_value: 0.25
+  cross_jurisdiction: 0.20
+  rebalance_frequency: monthly
+  breach_multiplier: 1.5               # immediate rebal if block exceeds this × budget
+
+# -----------------------------------------------------------------------------
+# Transaction costs (§5.4)
+# Half-spread is one-way; commission is per-contract round-trip.
+# -----------------------------------------------------------------------------
+transaction_costs:
+  slippage_buffer_pct: 0.20            # +20% on half-spread for conservatism
+
+  instruments:
+    GC:
+      half_spread_per_oz: 0.10
+      commission_per_contract: 2.50
+      contract_size_oz: 100
+    SI:
+      half_spread_per_oz: 0.005
+      commission_per_contract: 2.50
+      contract_size_oz: 5000
+    PL:
+      half_spread_per_oz: 0.50
+      commission_per_contract: 2.50
+      contract_size_oz: 50
+    G10_FX:
+      half_spread_pips: 0.5
+    SR3:
+      half_spread_bp: 0.25
+      commission_per_contract: 2.00
+    SHFE_AU:
+      half_spread_cny_per_gram: 0.02
+      commission_cny: 10.0
+    TOCOM_AU:
+      half_spread_jpy_per_gram: 1.0
+      commission_jpy: 300.0
+    EFP:
+      half_spread_per_oz: 0.15
+
+  funding:
+    usd_rate: "SOFR flat"
+    funding_spread_non_usd_bp: 25      # OIS + 25 bp for non-USD legs
+
+  # Robustness sensitivity multipliers (§6.2)
+  tc_multipliers: [1.0, 2.0, 3.0]
+
+# -----------------------------------------------------------------------------
+# Strategies
+# -----------------------------------------------------------------------------
+strategies:
+
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # 3.1 Time-Series Momentum
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  momentum:
+    instruments:
+      metals: [gc_fut_front, si_fut_front, pl_fut_front]
+      fx: [eurusd_spot, usdjpy_spot, audusd_spot]
+      rates: [sofr_fut_front, sofr_fut_second, sofr_fut_third, sofr_fut_fourth]
+
+    lookbacks_days: [20, 63, 126, 252]
+    signal_blend_weights: [0.25, 0.25, 0.25, 0.25]  # must sum to 1.0
+    ema_fast: 8
+    ema_slow: 32
+    breakout_channel_days: 20
+
+    signal_cap: 1.0
+    vol_target_annual: 0.10
+    stop_loss_multiple: 3.0            # stop at 3× daily vol move
+    cooldown_days_after_stop: 5        # sit flat after stop-loss trigger
+
+    rebalance: daily
+
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # 3.2 Carry / Term-Structure
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  carry:
+
+    fx:
+      pairs: [eurusd_spot, usdjpy_spot, gbpusd_spot, audusd_spot, usdchf_spot]
+      carry_horizon_days: 90           # 3M forward-implied carry
+      ranking_top_pct: 0.30            # go long top 30% carry
+      ranking_bottom_pct: 0.30         # go short bottom 30% carry
+      min_carry_bp: 50                 # skip pairs with < 50 bp annualised carry
+      trend_filter_lookback_days: 63   # only take carry aligned with 3M momentum
+      crisis_filter: true
+      crisis_vix_threshold: 30
+      rebalance: weekly
+
+    metals:
+      calendar_spreads:
+        instruments: [gc_fut_front, gc_fut_second, gc_fut_third,
+                      si_fut_front, si_fut_second, si_fut_third]
+        zscore_lookback_days: 120
+        entry_zscore: 1.5
+        exit_zscore: 0.5
+        carry_momentum_lookback_days: 20
+        vol_target_annual: 0.10
+        rebalance: daily
+
+    sofr_curve:
+      instruments: [sofr_fut_front, sofr_fut_second, sofr_fut_third, sofr_fut_fourth]
+      tenors_months: [3, 6, 12, 24]
+      steepness_threshold_bp: 10
+      policy_stability_window_days: 10
+      zscore_lookback_days: 60
+      rebalance: daily
+
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # 3.3 Metals Relative-Value
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  relative_value:
+
+    gold_silver_ratio:
+      long_ticker: xauusd_spot
+      short_ticker: xagusd_spot
+      lookback_days: 252
+      entry_zscore_long_silver: 1.5    # go long silver (short ratio) when z > +1.5
+      entry_zscore_long_gold: -1.5     # go long gold  (long ratio) when z < -1.5
+      exit_zscore: 0.5
+      max_holding_days: 126
+      vol_target_annual: 0.10
+
+    gold_platinum_ratio:
+      long_ticker: xauusd_spot
+      short_ticker: xptusd_spot
+      lookback_days: 504               # 2Y rolling
+      entry_zscore: 1.5
+      exit_zscore: 0.5
+      max_holding_days: 252
+      vol_target_annual: 0.08          # thinner liquidity
+
+    copper_gold_ratio:
+      long_ticker: hg_fut_front
+      short_ticker: xauusd_spot
+      lookback_days: 252
+      use_as: regime_filter            # not a direct trade
+
+    rebalance: daily
+
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # 3.4 Cross-Jurisdiction Arbitrage
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  cross_jurisdiction:
+
+    comex_shfe_gold:
+      comex_ticker: gc_fut_front
+      shfe_ticker: shfe_au_front
+      fx_pair: USDCNH_spot
+      fair_value_model: "shfe_cny_to_usd_minus_comex"
+      zscore_window_days: 60
+      entry_zscore: 2.0
+      exit_zscore: 0.5
+      china_gold_vat_pct: 0.0
+      china_silver_vat_pct: 13.0
+      shfe_price_limit_pct: 7.0
+      max_notional_usd: 5_000_000
+      vol_target_annual: 0.08
+
+    comex_tocom_gold:
+      comex_ticker: gc_fut_front
+      tocom_ticker: tocom_au_front
+      fx_pair: USDJPY_spot
+      fair_value_model: "tocom_jpy_to_usd_minus_comex"
+      zscore_window_days: 60
+      entry_zscore: 1.5
+      exit_zscore: 0.5
+      funding_differential: "SOFR minus TONAR"
+      max_notional_usd: 5_000_000
+      vol_target_annual: 0.08
+
+    # --- EFP / Basis: COMEX futures vs LBMA spot (§3.4.1) ---
+    efp_comex_lbma_gold:
+      comex_ticker: gc_fut_front
+      lbma_ticker: lbma_gold_pm
+      spot_ticker: xauusd_spot
+
+      # Fair-value model:
+      #   FV_EFP = Spot × (SOFR + storage_pct_pa − lease_rate_pct_pa)
+      #            × (days_to_delivery / 365)
+      storage_cost_pct_pa: 0.55        # 0.55% per annum
+      lease_rate_ticker_1m: "GLLR1M Index"
+      lease_rate_ticker_3m: "GLLR3M Index"
+      lease_rate_fallback_pct_pa: 0.30 # 0.30% fallback if data missing
+      sofr_tenor: "1M"
+
+      zscore_windows_days: [30, 90]
+      entry_zscore_abs: 1.5
+      exit_zscore_abs: 0.5
+      min_edge_usd_per_oz: 0.50
+      efp_tc_per_oz: 0.30
+
+      max_notional_usd: 10_000_000
+      vol_target_annual: 0.06          # basis is low-vol
+
+    legging_buffer_sigma: 0.5
+    rebalance: daily
+
+# -----------------------------------------------------------------------------
+# Portfolio construction (§4)
+# -----------------------------------------------------------------------------
+portfolio:
+  rebalance_freq: daily
+  risk_budget_rebalance_freq: monthly
+
+  # Cross-strategy correlation de-risking (§4.3)
+  corr_lookback_days: 60
+  corr_riskoff_threshold: 0.50
+  gross_reduction_on_high_corr: 0.20
+
+  # Regime detection (§4.3)
+  regime:
+    vix_threshold_risk_off: 25
+    vix_threshold_risk_on: 16
+    dxy_momentum_lookback_days: 21
+    two_ten_slope_threshold_bp: 0
+
+    gross_multiplier_risk_on: 1.0
+    gross_multiplier_risk_off: 0.85
+    gross_multiplier_transition: 0.70
+
+  # Leverage bounds
+  max_gross_leverage: 4.0
+  max_gold_delta_pct_nav: 1.5
+  per_block_max_gross: 1.5
+
+# -----------------------------------------------------------------------------
+# Performance targets (§6.3) — reference only
+# -----------------------------------------------------------------------------
+performance_targets:
+  sharpe_combined: 1.0
+  sharpe_per_strategy: 0.5
+  max_drawdown_pct: 15.0
+  vol_range_annual: [0.08, 0.12]
+  calmar_ratio: 0.7
+  hit_rate_daily: 0.52
+  max_turnover_annual: 30.0
+
+# -----------------------------------------------------------------------------
+# Robustness (§6.2)
+# -----------------------------------------------------------------------------
+robustness:
+  param_sweep_range_pct: 30
+  param_sweep_min_profitable_pct: 70
+  subsample_splits: 3
+  subsample_min_profitable: 2
+  max_turnover_flag: 50.0

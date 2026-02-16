@@ -1,0 +1,1 @@
+"""Macro Metals — Test suite."""

@@ -1,0 +1,134 @@
+# config/tickers.yaml
+# =============================================================================
+# Macro Metals System — Bloomberg Ticker Mappings
+# Reference: macro_metals_system_memory.md §2.1–2.3
+#
+# Convention: lowercase snake_case logical names → Bloomberg ticker strings.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 2.1 Metals
+# -----------------------------------------------------------------------------
+metals:
+  # COMEX Gold
+  gc_fut_front: "GC1 Comdty"
+  gc_fut_second: "GC2 Comdty"
+  gc_fut_third: "GC3 Comdty"
+  xauusd_spot: "XAU Curncy"
+
+  # COMEX Silver
+  si_fut_front: "SI1 Comdty"
+  si_fut_second: "SI2 Comdty"
+  si_fut_third: "SI3 Comdty"
+  xagusd_spot: "XAG Curncy"
+
+  # NYMEX Platinum
+  pl_fut_front: "PL1 Comdty"
+  xptusd_spot: "XPT Curncy"
+
+  # NYMEX Palladium
+  pa_fut_front: "PA1 Comdty"
+  xpdusd_spot: "XPD Curncy"
+
+  # COMEX Copper
+  hg_fut_front: "HG1 Comdty"
+
+  # SHFE Gold (CNY-denominated)
+  shfe_au_front: "SAU1 Comdty"
+  shfe_au_second: "SAU2 Comdty"
+
+  # TOCOM/OSE Gold (JPY-denominated)
+  tocom_au_front: "JGA1 Comdty"
+
+  # LBMA reference
+  lbma_gold_am: "GOLDLNAM Index"
+  lbma_gold_pm: "GOLDLNPM Index"
+  lbma_silver_fix: "SLVRLN Index"
+
+  # Gold lease rates (EFP fair-value model §3.4.1)
+  gold_lease_1m: "GLLR1M Index"
+  gold_lease_3m: "GLLR3M Index"
+
+  # LME base metals (regime reference only)
+  lme_copper_3m: "LMCADS03 Comdty"
+  lme_zinc_3m: "LMZSDS03 Comdty"
+  lme_nickel_3m: "LMNIDS03 Comdty"
+
+# Contract metadata
+metals_contract_size:
+  GC: 100        # troy oz
+  SI: 5000       # troy oz
+  PL: 50         # troy oz
+  PA: 100        # troy oz
+  HG: 25000      # lbs
+
+metals_delivery_months:
+  GC: [2, 4, 6, 8, 10, 12]
+  SI: [3, 5, 7, 9, 12]
+  PL: [1, 4, 7, 10]
+  PA: [3, 6, 9, 12]
+
+# -----------------------------------------------------------------------------
+# 2.2 FX
+# -----------------------------------------------------------------------------
+fx:
+  dxy_index: "DXY Index"
+  eurusd_spot: "EURUSD Curncy"
+  usdjpy_spot: "USDJPY Curncy"
+  gbpusd_spot: "GBPUSD Curncy"
+  audusd_spot: "AUDUSD Curncy"
+  usdchf_spot: "USDCHF Curncy"
+  usdcnh_spot: "USDCNH Curncy"
+  usdcny_spot: "USDCNY Curncy"         # onshore reference only
+
+# FX forwards (3M tenor, for carry calculation)
+fx_forwards_3m:
+  eurusd_3m_fwd: "EUR3M Curncy"
+  usdjpy_3m_fwd: "JPY3M Curncy"
+  gbpusd_3m_fwd: "GBP3M Curncy"
+  audusd_3m_fwd: "AUD3M Curncy"
+  usdcnh_3m_fwd: "CCN3M Curncy"
+
+# -----------------------------------------------------------------------------
+# 2.3 Rates
+# -----------------------------------------------------------------------------
+rates:
+  # SOFR OIS (short end)
+  sofr_ois_1m: "USOSFRM Curncy"
+  sofr_ois_3m: "USOSFRA Curncy"
+  sofr_ois_6m: "USOSFRB Curncy"
+  sofr_ois_1y: "USOSFR1 Curncy"
+  sofr_ois_2y: "USOSFR2 Curncy"
+
+  # SOFR futures (front 4 quarterly)
+  sofr_fut_front: "SR3 Comdty"
+  sofr_fut_second: "SR32 Comdty"
+  sofr_fut_third: "SR33 Comdty"
+  sofr_fut_fourth: "SR34 Comdty"
+
+  # Fed Funds
+  fed_funds_target: "FDTR Index"
+
+  # US Treasuries (yields)
+  us_2y_yield: "USGG2YR Index"
+  us_5y_yield: "USGG5YR Index"
+  us_10y_yield: "USGG10YR Index"
+  us_30y_yield: "USGG30YR Index"
+
+  # TIPS / Breakevens
+  tips_5y_real_yield: "USGGT05Y Index"
+  tips_10y_real_yield: "USGGT10Y Index"
+  breakeven_5y: "USGGBE05 Index"
+  breakeven_10y: "USGGBE10 Index"
+
+  # Foreign OIS (cross-jurisdiction funding differentials)
+  tonar_ois_1y: "JYSO1 Curncy"
+  estr_ois_1y: "EUESTA1 Curncy"
+
+# -----------------------------------------------------------------------------
+# Volatility / Risk indicators
+# -----------------------------------------------------------------------------
+risk_indicators:
+  vix: "VIX Index"
+  move_index: "MOVE Index"
+  gold_vol_index: "GVZ Index"
