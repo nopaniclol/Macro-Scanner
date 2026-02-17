@@ -49,6 +49,15 @@ metals:
   gold_lease_1m: "GLLR1M Index"
   gold_lease_3m: "GLLR3M Index"
 
+  # Energy (NYMEX)
+  cl_fut_front: "CL1 Comdty"
+  ng_fut_front: "NG1 Comdty"
+
+  # Agriculture (CBOT)
+  w_fut_front: "W 1 Comdty"
+  c_fut_front: "C 1 Comdty"
+  s_fut_front: "S 1 Comdty"
+
   # LME base metals (regime reference only)
   lme_copper_3m: "LMCADS03 Comdty"
   lme_zinc_3m: "LMZSDS03 Comdty"
@@ -80,6 +89,8 @@ fx:
   usdchf_spot: "USDCHF Curncy"
   usdcnh_spot: "USDCNH Curncy"
   usdcny_spot: "USDCNY Curncy"         # onshore reference only
+  nzdusd_spot: "NZDUSD Curncy"
+  usdcad_spot: "USDCAD Curncy"
 
 # FX forwards (3M tenor, for carry calculation)
 fx_forwards_3m:
@@ -121,9 +132,24 @@ rates:
   breakeven_5y: "USGGBE05 Index"
   breakeven_10y: "USGGBE10 Index"
 
+  # US Treasury futures (generic front)
+  ust_2y_fut: "TU1 Comdty"
+  ust_5y_fut: "FV1 Comdty"
+  ust_10y_fut: "TY1 Comdty"
+  ust_30y_fut: "US1 Comdty"
+
   # Foreign OIS (cross-jurisdiction funding differentials)
   tonar_ois_1y: "JYSO1 Curncy"
   estr_ois_1y: "EUESTA1 Curncy"
+
+# -----------------------------------------------------------------------------
+# 2.4 Equity Index Futures
+# -----------------------------------------------------------------------------
+equities:
+  es_fut_front: "ES1 Index"
+  nq_fut_front: "NQ1 Index"
+  stoxx50_fut_front: "VG1 Index"
+  nikkei_fut_front: "NK1 Index"
 
 # -----------------------------------------------------------------------------
 # Volatility / Risk indicators
