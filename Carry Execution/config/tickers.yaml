@@ -1,0 +1,590 @@
+# =============================================================================
+# Bloomberg Ticker Mappings
+# FX + Metals + Rates Quantitative Trading Strategy
+# =============================================================================
+
+# =============================================================================
+# FX SPOT
+# =============================================================================
+
+fx_spot:
+  EURUSD: "EURUSD Curncy"
+  USDJPY: "USDJPY Curncy"
+  GBPUSD: "GBPUSD Curncy"
+  AUDUSD: "AUDUSD Curncy"
+  USDCNH: "USDCNH Curncy"
+  # Cross rates (for reference)
+  EURGBP: "EURGBP Curncy"
+  EURJPY: "EURJPY Curncy"
+  GBPJPY: "GBPJPY Curncy"
+  AUDJPY: "AUDJPY Curncy"
+
+# =============================================================================
+# FX FORWARDS (for carry calculation)
+# =============================================================================
+
+fx_forwards:
+  EURUSD:
+    spot: "EURUSD Curncy"
+    1W: "EUR1W Curncy"
+    2W: "EUR2W Curncy"
+    1M: "EUR1M Curncy"
+    2M: "EUR2M Curncy"
+    3M: "EUR3M Curncy"
+    6M: "EUR6M Curncy"
+    9M: "EUR9M Curncy"
+    1Y: "EUR12M Curncy"
+
+  USDJPY:
+    spot: "USDJPY Curncy"
+    1W: "JPY1W Curncy"
+    2W: "JPY2W Curncy"
+    1M: "JPY1M Curncy"
+    2M: "JPY2M Curncy"
+    3M: "JPY3M Curncy"
+    6M: "JPY6M Curncy"
+    9M: "JPY9M Curncy"
+    1Y: "JPY12M Curncy"
+
+  GBPUSD:
+    spot: "GBPUSD Curncy"
+    1W: "GBP1W Curncy"
+    2W: "GBP2W Curncy"
+    1M: "GBP1M Curncy"
+    2M: "GBP2M Curncy"
+    3M: "GBP3M Curncy"
+    6M: "GBP6M Curncy"
+    9M: "GBP9M Curncy"
+    1Y: "GBP12M Curncy"
+
+  AUDUSD:
+    spot: "AUDUSD Curncy"
+    1W: "AUD1W Curncy"
+    2W: "AUD2W Curncy"
+    1M: "AUD1M Curncy"
+    2M: "AUD2M Curncy"
+    3M: "AUD3M Curncy"
+    6M: "AUD6M Curncy"
+    9M: "AUD9M Curncy"
+    1Y: "AUD12M Curncy"
+
+  USDCNH:
+    spot: "USDCNH Curncy"
+    1W: "CCN1W Curncy"
+    2W: "CCN2W Curncy"
+    1M: "CCN1M Curncy"
+    2M: "CCN2M Curncy"
+    3M: "CCN3M Curncy"
+    6M: "CCN6M Curncy"
+    9M: "CCN9M Curncy"
+    1Y: "CCN12M Curncy"
+
+# =============================================================================
+# FX IMPLIED VOLATILITY (ATM)
+# =============================================================================
+
+fx_vol_atm:
+  EURUSD:
+    1W: "EURUSDV1W Curncy"
+    1M: "EURUSDV1M Curncy"
+    2M: "EURUSDV2M Curncy"
+    3M: "EURUSDV3M Curncy"
+    6M: "EURUSDV6M Curncy"
+    1Y: "EURUSDV1Y Curncy"
+
+  USDJPY:
+    1W: "USDJPYV1W Curncy"
+    1M: "USDJPYV1M Curncy"
+    2M: "USDJPYV2M Curncy"
+    3M: "USDJPYV3M Curncy"
+    6M: "USDJPYV6M Curncy"
+    1Y: "USDJPYV1Y Curncy"
+
+  GBPUSD:
+    1W: "GBPUSDV1W Curncy"
+    1M: "GBPUSDV1M Curncy"
+    2M: "GBPUSDV2M Curncy"
+    3M: "GBPUSDV3M Curncy"
+    6M: "GBPUSDV6M Curncy"
+    1Y: "GBPUSDV1Y Curncy"
+
+  AUDUSD:
+    1W: "AUDUSDV1W Curncy"
+    1M: "AUDUSDV1M Curncy"
+    2M: "AUDUSDV2M Curncy"
+    3M: "AUDUSDV3M Curncy"
+    6M: "AUDUSDV6M Curncy"
+    1Y: "AUDUSDV1Y Curncy"
+
+  USDCNH:
+    1W: "USDCNHV1W Curncy"
+    1M: "USDCNHV1M Curncy"
+    3M: "USDCNHV3M Curncy"
+    6M: "USDCNHV6M Curncy"
+    1Y: "USDCNHV1Y Curncy"
+
+# =============================================================================
+# FX RISK REVERSALS (25 Delta)
+# =============================================================================
+
+fx_risk_reversals:
+  EURUSD:
+    1W: "EURUSD25R1W Curncy"
+    1M: "EURUSD25R1M Curncy"
+    3M: "EURUSD25R3M Curncy"
+    6M: "EURUSD25R6M Curncy"
+    1Y: "EURUSD25R1Y Curncy"
+
+  USDJPY:
+    1W: "USDJPY25R1W Curncy"
+    1M: "USDJPY25R1M Curncy"
+    3M: "USDJPY25R3M Curncy"
+    6M: "USDJPY25R6M Curncy"
+    1Y: "USDJPY25R1Y Curncy"
+
+  GBPUSD:
+    1W: "GBPUSD25R1W Curncy"
+    1M: "GBPUSD25R1M Curncy"
+    3M: "GBPUSD25R3M Curncy"
+    6M: "GBPUSD25R6M Curncy"
+    1Y: "GBPUSD25R1Y Curncy"
+
+  AUDUSD:
+    1W: "AUDUSD25R1W Curncy"
+    1M: "AUDUSD25R1M Curncy"
+    3M: "AUDUSD25R3M Curncy"
+    6M: "AUDUSD25R6M Curncy"
+    1Y: "AUDUSD25R1Y Curncy"
+
+  USDCNH:
+    1M: "USDCNH25R1M Curncy"
+    3M: "USDCNH25R3M Curncy"
+    6M: "USDCNH25R6M Curncy"
+    1Y: "USDCNH25R1Y Curncy"
+
+# =============================================================================
+# FX BUTTERFLY (25 Delta)
+# =============================================================================
+
+fx_butterfly:
+  EURUSD:
+    1M: "EURUSD25B1M Curncy"
+    3M: "EURUSD25B3M Curncy"
+    6M: "EURUSD25B6M Curncy"
+    1Y: "EURUSD25B1Y Curncy"
+
+  USDJPY:
+    1M: "USDJPY25B1M Curncy"
+    3M: "USDJPY25B3M Curncy"
+    6M: "USDJPY25B6M Curncy"
+    1Y: "USDJPY25B1Y Curncy"
+
+# =============================================================================
+# PRECIOUS METALS
+# =============================================================================
+
+metals:
+  spot:
+    XAUUSD: "XAU Curncy"      # Gold spot
+    XAGUSD: "XAG Curncy"      # Silver spot
+    XPTUSD: "XPT Curncy"      # Platinum (reference)
+    XPDUSD: "XPD Curncy"      # Palladium (reference)
+
+  futures:
+    gold_front: "GC1 Comdty"
+    gold_second: "GC2 Comdty"
+    silver_front: "SI1 Comdty"
+    silver_second: "SI2 Comdty"
+
+  forwards:
+    XAUUSD:
+      1M: "XAUUSD1M Curncy"
+      3M: "XAUUSD3M Curncy"
+      6M: "XAUUSD6M Curncy"
+      1Y: "XAUUSD1Y Curncy"
+
+# =============================================================================
+# SOFR SWAPS (USD OIS)
+# =============================================================================
+
+sofr_swaps:
+  # Short End
+  1W: "USOSFR1Z Curncy"
+  2W: "USOSFR2Z Curncy"
+  3W: "USOSFR3Z Curncy"
+  1M: "USOSFRM Curncy"
+  2M: "USOSFR2 Curncy"
+  3M: "USOSFRA Curncy"
+  4M: "USOSFRD Curncy"
+  5M: "USOSFRE Curncy"
+  6M: "USOSFRB Curncy"
+  9M: "USOSFRI Curncy"
+  # Long End
+  1Y: "USOSFR1 Curncy"
+  18M: "USOSFR1F Curncy"
+  2Y: "USOSFR2 Curncy"
+  3Y: "USOSFR3 Curncy"
+  4Y: "USOSFR4 Curncy"
+  5Y: "USOSFR5 Curncy"
+  6Y: "USOSFR6 Curncy"
+  7Y: "USOSFR7 Curncy"
+  8Y: "USOSFR8 Curncy"
+  9Y: "USOSFR9 Curncy"
+  10Y: "USOSFR10 Curncy"
+  12Y: "USOSFR12 Curncy"
+  15Y: "USOSFR15 Curncy"
+  20Y: "USOSFR20 Curncy"
+  25Y: "USOSFR25 Curncy"
+  30Y: "USOSFR30 Curncy"
+
+# Legacy Fed Funds (pre-SOFR)
+fed_funds_swaps:
+  1M: "USSO1 Curncy"
+  3M: "USSO3 Curncy"
+  6M: "USSO6 Curncy"
+  1Y: "USSO1 Curncy"
+  2Y: "USSO2 Curncy"
+  5Y: "USSO5 Curncy"
+  10Y: "USSO10 Curncy"
+  30Y: "USSO30 Curncy"
+
+# =============================================================================
+# EUR OIS (ESTR)
+# =============================================================================
+
+eur_ois:
+  # ESTR-based swaps
+  1W: "EUEST1Z Curncy"
+  2W: "EUEST2Z Curncy"
+  1M: "EUESTAM Curncy"
+  2M: "EUESTA2 Curncy"
+  3M: "EUESTAIM Curncy"
+  6M: "EUESTAB Curncy"
+  9M: "EUESTAI Curncy"
+  1Y: "EUESTA1 Curncy"
+  18M: "EUESTA1F Curncy"
+  2Y: "EUESTA2 Curncy"
+  3Y: "EUESTA3 Curncy"
+  4Y: "EUESTA4 Curncy"
+  5Y: "EUESTA5 Curncy"
+  7Y: "EUESTA7 Curncy"
+  10Y: "EUESTA10 Curncy"
+  15Y: "EUESTA15 Curncy"
+  20Y: "EUESTA20 Curncy"
+  30Y: "EUESTA30 Curncy"
+
+# Legacy EONIA (pre-ESTR)
+eur_eonia:
+  1W: "EUSWEA Curncy"
+  1M: "EUSWE1 Curncy"
+  3M: "EUSWE3 Curncy"
+  6M: "EUSWE6 Curncy"
+  1Y: "EUSWE1 Curncy"
+  2Y: "EUSWE2 Curncy"
+  5Y: "EUSWE5 Curncy"
+  10Y: "EUSWE10 Curncy"
+  30Y: "EUSWE30 Curncy"
+
+# =============================================================================
+# JPY OIS (TONAR)
+# =============================================================================
+
+jpy_ois:
+  1W: "JYSO1Z Curncy"
+  2W: "JYSO2Z Curncy"
+  1M: "JYSOM Curncy"
+  2M: "JYSO2M Curncy"
+  3M: "JYSOA Curncy"
+  6M: "JYSOB Curncy"
+  9M: "JYSOI Curncy"
+  1Y: "JYSO1 Curncy"
+  18M: "JYSO1F Curncy"
+  2Y: "JYSO2 Curncy"
+  3Y: "JYSO3 Curncy"
+  4Y: "JYSO4 Curncy"
+  5Y: "JYSO5 Curncy"
+  7Y: "JYSO7 Curncy"
+  10Y: "JYSO10 Curncy"
+  15Y: "JYSO15 Curncy"
+  20Y: "JYSO20 Curncy"
+  30Y: "JYSO30 Curncy"
+
+# =============================================================================
+# GBP OIS (SONIA)
+# =============================================================================
+
+gbp_ois:
+  1W: "BPSWS1Z Curncy"
+  2W: "BPSWS2Z Curncy"
+  1M: "BPSWSM Curncy"
+  2M: "BPSWS2M Curncy"
+  3M: "BPSWSA Curncy"
+  6M: "BPSWSB Curncy"
+  9M: "BPSWSI Curncy"
+  1Y: "BPSWS1 Curncy"
+  18M: "BPSWS1F Curncy"
+  2Y: "BPSWS2 Curncy"
+  3Y: "BPSWS3 Curncy"
+  4Y: "BPSWS4 Curncy"
+  5Y: "BPSWS5 Curncy"
+  7Y: "BPSWS7 Curncy"
+  10Y: "BPSWS10 Curncy"
+  15Y: "BPSWS15 Curncy"
+  20Y: "BPSWS20 Curncy"
+  30Y: "BPSWS30 Curncy"
+
+# =============================================================================
+# AUD OIS (AONIA / RBA Cash)
+# =============================================================================
+
+aud_ois:
+  1W: "ADSO1Z Curncy"
+  2W: "ADSO2Z Curncy"
+  1M: "ADSOM Curncy"
+  2M: "ADSO2M Curncy"
+  3M: "ADSOA Curncy"
+  6M: "ADSOB Curncy"
+  9M: "ADSOI Curncy"
+  1Y: "ADSO1 Curncy"
+  18M: "ADSO1F Curncy"
+  2Y: "ADSO2 Curncy"
+  3Y: "ADSO3 Curncy"
+  4Y: "ADSO4 Curncy"
+  5Y: "ADSO5 Curncy"
+  7Y: "ADSO7 Curncy"
+  10Y: "ADSO10 Curncy"
+  15Y: "ADSO15 Curncy"
+  20Y: "ADSO20 Curncy"
+  30Y: "ADSO30 Curncy"
+
+# =============================================================================
+# CNH DEPOSIT RATES (No OIS - use depo rates)
+# =============================================================================
+
+cnh_deposits:
+  ON: "CNHDRON Index"
+  1W: "CHHIDR1W Index"
+  1M: "CNHDR1M Index"
+  2M: "CNHDR2M Index"
+  3M: "CNHDR3M Index"
+  6M: "CNHDR6M Index"
+  9M: "CNHDR9M Index"
+  1Y: "CNHDR1Y Index"
+
+# CNY Onshore Reference (SHIBOR)
+cny_shibor:
+  ON: "SHIBORON Index"
+  1W: "SHIBOR1W Index"
+  1M: "SHIBOR1M Index"
+  3M: "SHIBOR3M Index"
+  6M: "SHIBOR6M Index"
+  9M: "SHIBOR9M Index"
+  1Y: "SHIBOR1Y Index"
+
+# =============================================================================
+# CROSS-CURRENCY BASIS SWAPS
+# =============================================================================
+
+xccy_basis:
+  EURUSD:
+    3M: "EUBS3 Curncy"
+    6M: "EUBS6 Curncy"
+    1Y: "EUBS1 Curncy"
+    2Y: "EUBS2 Curncy"
+    3Y: "EUBS3 Curncy"
+    5Y: "EUBS5 Curncy"
+    10Y: "EUBS10 Curncy"
+    30Y: "EUBS30 Curncy"
+
+  USDJPY:
+    3M: "JYBS3M Curncy"
+    6M: "JYBS6M Curncy"
+    1Y: "JYBS1 Curncy"
+    2Y: "JYBS2 Curncy"
+    3Y: "JYBS3 Curncy"
+    5Y: "JYBS5 Curncy"
+    10Y: "JYBS10 Curncy"
+    30Y: "JYBS30 Curncy"
+
+  GBPUSD:
+    3M: "BPBS3M Curncy"
+    6M: "BPBS6M Curncy"
+    1Y: "BPBS1 Curncy"
+    2Y: "BPBS2 Curncy"
+    5Y: "BPBS5 Curncy"
+    10Y: "BPBS10 Curncy"
+
+  AUDUSD:
+    3M: "ADBS3M Curncy"
+    6M: "ADBS6M Curncy"
+    1Y: "ADBS1 Curncy"
+    2Y: "ADBS2 Curncy"
+    5Y: "ADBS5 Curncy"
+    10Y: "ADBS10 Curncy"
+
+# =============================================================================
+# VOLATILITY INDICES
+# =============================================================================
+
+volatility_indices:
+  # Equity Vol
+  VIX: "VIX Index"
+  VVIX: "VVIX Index"             # VIX of VIX
+  VXN: "VXN Index"               # Nasdaq vol
+
+  # FX Vol
+  CVIX: "JPMVXYG7 Index"         # JPM G7 FX Vol Index
+  EURUSD_VOL: "EURUSDV1M Curncy"
+  USDJPY_VOL: "USDJPYV1M Curncy"
+
+  # Rates Vol
+  MOVE: "MOVE Index"             # ICE BofA MOVE Index
+  SRVIX: "SRVIX Index"           # Swaption Vol Index
+
+  # EM Vol
+  EMVOL: "JPMVXYEM Index"        # JPM EM FX Vol
+
+# =============================================================================
+# GOVERNMENT BONDS (for reference)
+# =============================================================================
+
+govt_bonds:
+  US:
+    2Y: "USGG2YR Index"
+    5Y: "USGG5YR Index"
+    10Y: "USGG10YR Index"
+    30Y: "USGG30YR Index"
+
+  DE:  # German Bunds
+    2Y: "GTDEM2Y Govt"
+    5Y: "GTDEM5Y Govt"
+    10Y: "GTDEM10Y Govt"
+    30Y: "GTDEM30Y Govt"
+
+  JP:
+    2Y: "GTJPY2Y Govt"
+    5Y: "GTJPY5Y Govt"
+    10Y: "GTJPY10Y Govt"
+    30Y: "GTJPY30Y Govt"
+
+  GB:
+    2Y: "GTGBP2Y Govt"
+    5Y: "GTGBP5Y Govt"
+    10Y: "GTGBP10Y Govt"
+    30Y: "GTGBP30Y Govt"
+
+  AU:
+    2Y: "GTAUD2Y Govt"
+    5Y: "GTAUD5Y Govt"
+    10Y: "GTAUD10Y Govt"
+
+# =============================================================================
+# REAL YIELDS / TIPS
+# =============================================================================
+
+real_yields:
+  US:
+    5Y: "USGGT05Y Index"
+    10Y: "USGGT10Y Index"
+    30Y: "USGGT30Y Index"
+
+  breakevens:
+    5Y: "USGGBE05 Index"
+    10Y: "USGGBE10 Index"
+    30Y: "USGGBE30 Index"
+
+# =============================================================================
+# ECONOMIC DATA
+# =============================================================================
+
+economic_data:
+  # CPI (YoY)
+  cpi:
+    US: "CPI YOY Index"
+    EUR: "ECCPEMUY Index"
+    JP: "JNCPIYOY Index"
+    GB: "UKRPCJYR Index"
+    AU: "AUCPIYOY Index"
+    CN: "CNCPIYOY Index"
+
+  # Core CPI
+  core_cpi:
+    US: "CPUPXCHG Index"
+    EUR: "ECCPCOIY Index"
+
+  # PPP Exchange Rates (OECD)
+  ppp:
+    EURUSD: "PPPUSDEU Index"
+    USDJPY: "PPPJPYUS Index"
+    GBPUSD: "PPPUSDUK Index"
+    AUDUSD: "PPPUSDAU Index"
+    USDCNH: "PPPUSDCN Index"
+
+  # GDP Growth
+  gdp:
+    US: "GDP CQOQ Index"
+    EUR: "EUGNEMUQ Index"
+    JP: "JGDPAGDP Index"
+    GB: "UKGRABIQ Index"
+    AU: "AUGDPQOQ Index"
+    CN: "CNGDPYOY Index"
+
+  # Current Account
+  current_account:
+    US: "USCABAL Index"
+    EUR: "ECCAEUR Index"
+    JP: "JNCABAL Index"
+    GB: "UKCABAL Index"
+    AU: "AUCABAL Index"
+    CN: "CNCABAL Index"
+
+# =============================================================================
+# CENTRAL BANK POLICY RATES
+# =============================================================================
+
+policy_rates:
+  FOMC: "FDTR Index"           # Fed Funds Target Rate
+  ECB: "EURR002W Index"        # ECB Deposit Rate
+  BOJ: "BOJDTR Index"          # BOJ Policy Rate
+  BOE: "UKBRBASE Index"        # Bank of England Rate
+  RBA: "RBATCTR Index"         # RBA Cash Rate
+  PBOC: "CHLR1Y Index"         # PBOC 1Y LPR
+
+# =============================================================================
+# FREE DATA ALTERNATIVES (yfinance, FRED)
+# =============================================================================
+
+free_data_mappings:
+  # yfinance tickers
+  yfinance:
+    EURUSD: "EURUSD=X"
+    USDJPY: "JPY=X"
+    GBPUSD: "GBPUSD=X"
+    AUDUSD: "AUDUSD=X"
+    USDCNH: "CNH=X"
+    XAUUSD: "GC=F"
+    XAGUSD: "SI=F"
+    VIX: "^VIX"
+    US10Y: "^TNX"
+    DXY: "DX-Y.NYB"
+
+  # FRED series (via pandas_datareader)
+  fred:
+    SOFR: "SOFR"
+    FF_TARGET: "DFEDTARU"
+    US_10Y: "DGS10"
+    US_2Y: "DGS2"
+    US_30Y: "DGS30"
+    TIPS_10Y: "DFII10"
+    BREAKEVEN_10Y: "T10YIE"
+    VIX: "VIXCLS"
+    EUR_OIS: "ECBESTRVOLWGTTRMDMNRT"
+    CPI_US: "CPIAUCSL"
+
+  # Investing.com economic calendar (for reference)
+  investing_com:
+    # Use investing.com API or scraping for:
+    - "CPI releases"
+    - "GDP releases"
+    - "Central bank decisions"
+    - "NFP"

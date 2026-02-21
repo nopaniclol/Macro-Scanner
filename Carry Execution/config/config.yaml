@@ -1,0 +1,466 @@
+# =============================================================================
+# FX + Metals + Rates Quantitative Trading Strategy Configuration
+# Production-Grade Investment Bank FX Desk Implementation
+# =============================================================================
+
+project:
+  name: "FX Quant Carry Strategy"
+  version: "1.0.0"
+  environment: "development"  # development | production
+  data_mode: "free"  # bloomberg | free (for home testing)
+  timezone: "America/New_York"
+  base_currency: "USD"
+
+# =============================================================================
+# INSTRUMENTS
+# =============================================================================
+
+instruments:
+  # G10 FX Pairs (vs USD)
+  fx_pairs:
+    - EURUSD
+    - USDJPY
+    - GBPUSD
+    - AUDUSD
+    - USDCNH  # Offshore CNY
+
+  # Precious Metals (spot)
+  metals:
+    - XAUUSD  # Gold
+    - XAGUSD  # Silver
+
+  # SOFR IRS Tenors for rates overlay
+  sofr_tenors:
+    - 1W
+    - 2W
+    - 1M
+    - 2M
+    - 3M
+    - 6M
+    - 9M
+    - 1Y
+    - 18M
+    - 2Y
+    - 3Y
+    - 4Y
+    - 5Y
+    - 7Y
+    - 10Y
+    - 15Y
+    - 20Y
+    - 30Y
+
+  # Foreign OIS curves for carry calculation
+  foreign_ois:
+    EUR:
+      - 1W
+      - 1M
+      - 3M
+      - 6M
+      - 1Y
+      - 2Y
+      - 5Y
+      - 10Y
+    JPY:
+      - 1W
+      - 1M
+      - 3M
+      - 6M
+      - 1Y
+      - 2Y
+      - 5Y
+      - 10Y
+    GBP:
+      - 1W
+      - 1M
+      - 3M
+      - 6M
+      - 1Y
+      - 2Y
+      - 5Y
+      - 10Y
+    AUD:
+      - 1W
+      - 1M
+      - 3M
+      - 6M
+      - 1Y
+      - 2Y
+      - 5Y
+      - 10Y
+    CNH:
+      # CNH uses deposit rates
+      - ON
+      - 1W
+      - 1M
+      - 3M
+      - 6M
+      - 1Y
+
+# =============================================================================
+# SIGNAL PARAMETERS
+# =============================================================================
+
+signals:
+  # Time-Series Momentum
+  momentum:
+    enabled: true
+    lookback_windows:
+      short: 20      # 1 month
+      medium: 60     # 3 months
+      long: 252      # 12 months
+    weights:
+      short: 0.25
+      medium: 0.50
+      long: 0.25
+    signal_type: "returns"  # returns | risk_adjusted
+    zscore_window: 252
+    zscore_threshold: 2.0   # Cap signals at +/- 2 std
+    vol_scaling: true       # Scale by inverse vol
+    vol_lookback: 63        # 3 months
+
+  # FX Carry (Forward-Implied)
+  carry:
+    enabled: true
+    tenor: "3M"             # Primary carry tenor
+    alternative_tenors:
+      - "1M"
+      - "6M"
+      - "1Y"
+    calculation_method: "forward_points"  # forward_points | rate_differential
+    annualization_factor: 4   # For 3M tenor
+    zscore_window: 252
+    zscore_threshold: 2.5
+    carry_momentum_blend: 0.3  # Weight on carry momentum (change in carry)
+
+  # PPP Value Signal
+  value:
+    enabled: true
+    ppp_source: "imf"       # imf | oecd | big_mac
+    reversion_speed: 0.05   # Annual mean reversion rate
+    lookback_years: 5       # PPP estimation window
+    zscore_threshold: 2.0
+    half_life_months: 36    # Mean reversion half-life
+
+  # Rates Curve Analytics
+  rates:
+    enabled: true
+    curve_signals:
+      - slope           # 2s10s
+      - curvature       # 2s5s10s butterfly
+      - level           # Weighted average yield
+      - momentum        # Curve momentum
+    slope_tenors:
+      short: "2Y"
+      long: "10Y"
+    curvature_tenors:
+      short: "2Y"
+      belly: "5Y"
+      long: "10Y"
+    dv01_target: 50000    # USD DV01 per curve trade
+    max_curve_trades: 3
+
+  # Regime Filters
+  regime:
+    enabled: true
+    filters:
+      vix:
+        enabled: true
+        threshold_high: 25    # Risk-off above this
+        threshold_extreme: 35 # Reduce to minimum
+        lookback: 20
+        percentile_method: true
+        percentile_high: 80
+        percentile_extreme: 95
+
+      fx_vol:
+        enabled: true
+        index: "CVIX"         # JPM FX Vol Index
+        threshold_high: 12
+        threshold_extreme: 18
+        percentile_high: 80
+        percentile_extreme: 95
+
+      drawdown:
+        enabled: true
+        threshold_reduce: -0.05   # -5% reduce positions
+        threshold_stop: -0.10     # -10% minimum exposure
+        lookback_window: 252
+
+      risk_reversals:
+        enabled: true
+        lookback: 20
+        zscore_threshold: 2.0   # Skew warning level
+        reduce_on_negative_skew: true
+
+      correlation:
+        enabled: true
+        lookback: 63
+        threshold: 0.8          # High correlation warning
+        reduce_factor: 0.5
+
+# =============================================================================
+# PORTFOLIO CONSTRUCTION
+# =============================================================================
+
+portfolio:
+  # Volatility Targeting
+  vol_target:
+    annual_target: 0.12       # 12% annual volatility
+    rebalance_threshold: 0.02 # Rebalance if vol deviates by 2%
+    vol_lookback: 63          # 3-month rolling vol
+    vol_method: "ewma"        # ewma | simple | garch
+    ewma_halflife: 21
+    min_leverage: 0.5
+    max_leverage: 3.0
+
+  # Position Limits
+  limits:
+    max_single_position: 0.25   # 25% max single position
+    max_fx_gross: 4.0           # 400% gross FX exposure
+    max_rates_dv01: 500000      # $500K total rates DV01
+    max_metals_pct: 0.30        # 30% max metals allocation
+    max_carry_concentration: 0.40  # Max in high-carry currencies
+
+  # Turnover Control
+  turnover:
+    max_daily_turnover: 0.20    # 20% max daily turnover
+    rebalance_frequency: "daily"  # daily | weekly
+    min_trade_size: 0.01        # 1% minimum trade
+    turnover_penalty: 0.0005    # 5bp turnover cost in optimization
+
+  # Signal Combination
+  signal_weights:
+    momentum: 0.35
+    carry: 0.35
+    value: 0.15
+    rates: 0.15
+
+  # Instrument Weights (base allocation)
+  instrument_weights:
+    EURUSD: 0.25
+    USDJPY: 0.20
+    GBPUSD: 0.15
+    AUDUSD: 0.15
+    USDCNH: 0.10
+    XAUUSD: 0.10
+    XAGUSD: 0.05
+
+# =============================================================================
+# RATES OVERLAY / HEDGING
+# =============================================================================
+
+rates_overlay:
+  enabled: true
+
+  # DV01 Matching for FX Positions
+  dv01_hedge:
+    enabled: true
+    hedge_ratio: 0.5          # Hedge 50% of duration exposure
+    rebalance_threshold: 0.10 # Rehedge if drift > 10%
+
+  # Curve Trades
+  curve_trades:
+    enabled: true
+    strategies:
+      - type: "steepener"
+        short_tenor: "2Y"
+        long_tenor: "10Y"
+        trigger: "inverted"   # When curve inverts
+
+      - type: "flattener"
+        short_tenor: "2Y"
+        long_tenor: "10Y"
+        trigger: "steep"      # When curve too steep
+
+      - type: "butterfly"
+        short_tenor: "2Y"
+        belly_tenor: "5Y"
+        long_tenor: "10Y"
+        trigger: "curvature"
+
+  # Cross-Currency Basis
+  basis_swaps:
+    enabled: true
+    monitor_only: true        # Don't trade, just monitor
+    currencies:
+      - EURUSD
+      - USDJPY
+      - GBPUSD
+
+# =============================================================================
+# TRANSACTION COSTS
+# =============================================================================
+
+transaction_costs:
+  # FX Costs (bid-ask spread in pips)
+  fx_spread:
+    EURUSD: 0.5
+    USDJPY: 0.5
+    GBPUSD: 0.8
+    AUDUSD: 0.8
+    USDCNH: 3.0    # Wider spread for CNH
+
+  # FX Market Impact (bps per $100M)
+  fx_impact:
+    EURUSD: 0.2
+    USDJPY: 0.2
+    GBPUSD: 0.3
+    AUDUSD: 0.5
+    USDCNH: 1.0
+
+  # Metals Costs (bps)
+  metals_spread:
+    XAUUSD: 2.0
+    XAGUSD: 5.0
+
+  # SOFR IRS Costs (bps running)
+  irs_spread:
+    short: 0.25     # < 2Y
+    medium: 0.50    # 2Y - 10Y
+    long: 1.00      # > 10Y
+
+  # Financing Costs
+  financing:
+    margin_rate: 0.005      # 50bp annual
+    repo_spread: 0.002      # 20bp repo spread
+
+# =============================================================================
+# BACKTEST SETTINGS
+# =============================================================================
+
+backtest:
+  # Date Range
+  start_date: "2008-01-01"
+  end_date: "2026-01-31"
+
+  # Initial Capital
+  initial_capital: 100000000  # $100M
+
+  # Rebalancing
+  rebalance_frequency: "daily"
+
+  # Walk-Forward Validation
+  walk_forward:
+    enabled: true
+    train_window_months: 36   # 3 years training
+    test_window_months: 12    # 1 year test
+    step_months: 6            # Roll every 6 months
+
+  # Crisis Periods Analysis
+  crisis_periods:
+    GFC:
+      start: "2008-09-01"
+      end: "2009-03-31"
+    Euro_Crisis:
+      start: "2011-07-01"
+      end: "2012-07-31"
+    Taper_Tantrum:
+      start: "2013-05-01"
+      end: "2013-09-30"
+    CNY_Deval:
+      start: "2015-08-01"
+      end: "2016-02-29"
+    COVID:
+      start: "2020-02-15"
+      end: "2020-04-30"
+    Rate_Hikes_2022:
+      start: "2022-01-01"
+      end: "2022-12-31"
+
+  # Performance Metrics
+  metrics:
+    - total_return
+    - annualized_return
+    - volatility
+    - sharpe_ratio
+    - sortino_ratio
+    - max_drawdown
+    - calmar_ratio
+    - win_rate
+    - profit_factor
+    - avg_trade_return
+    - skewness
+    - kurtosis
+    - var_95
+    - cvar_95
+    - turnover
+    - information_ratio
+
+# =============================================================================
+# REPORTING
+# =============================================================================
+
+reporting:
+  # Daily Report
+  daily:
+    enabled: true
+    time: "18:00"             # Generate at 6pm
+    output_format:
+      - pdf
+      - html
+      - csv
+    email:
+      enabled: false
+      recipients: []
+
+  # Report Sections
+  sections:
+    performance_summary: true
+    position_report: true
+    signal_breakdown: true
+    regime_indicators: true
+    risk_metrics: true
+    transaction_log: true
+    pnl_attribution: true
+
+  # Charting
+  charts:
+    equity_curve: true
+    drawdown_chart: true
+    rolling_sharpe: true
+    position_heatmap: true
+    signal_timeseries: true
+    correlation_matrix: true
+
+# =============================================================================
+# EXECUTION
+# =============================================================================
+
+execution:
+  # Trading Hours (EST)
+  trading_hours:
+    start: "08:00"
+    end: "17:00"
+
+  # Order Types
+  order_types:
+    fx: "limit"               # limit | market
+    metals: "limit"
+    irs: "rfq"                # Request for quote
+
+  # Execution Constraints
+  constraints:
+    max_order_size_pct: 0.10  # Max 10% of ADV
+    min_order_size: 1000000   # $1M minimum
+    max_slippage_bps: 5       # Cancel if slippage > 5bp
+
+  # Broker Configuration (placeholder)
+  brokers:
+    fx_prime: "placeholder"
+    irs_dealer: "placeholder"
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+
+logging:
+  level: "INFO"               # DEBUG | INFO | WARNING | ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file:
+    enabled: true
+    path: "logs/"
+    rotation: "daily"
+    retention_days: 30
+  console:
+    enabled: true
