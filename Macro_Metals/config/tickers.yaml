@@ -112,7 +112,7 @@ rates:
   sofr_ois_2y: "USOSFR2 Curncy"
 
   # SOFR futures (front 4 quarterly)
-  sofr_fut_front: "SR3 Comdty"
+  sofr_fut_front: "SFR Comdty"
   sofr_fut_second: "SR32 Comdty"
   sofr_fut_third: "SR33 Comdty"
   sofr_fut_fourth: "SR34 Comdty"
