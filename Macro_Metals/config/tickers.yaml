@@ -34,8 +34,8 @@ metals:
   hg_fut_front: "HG1 Comdty"
 
   # SHFE Gold (CNY-denominated)
-  shfe_au_front: "SAU1 Comdty"
-  shfe_au_second: "SAU2 Comdty"
+  shfe_au_front: "AU1 Comdty"
+  shfe_au_second: "AU2 Comdty"
 
   # TOCOM/OSE Gold (JPY-denominated)
   tocom_au_front: "JGA1 Comdty"
