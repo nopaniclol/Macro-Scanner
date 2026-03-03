@@ -1,69 +1,286 @@
 # config/tickers.yaml
 # =============================================================================
-# Macro Metals System — Bloomberg Ticker Mappings
+# Macro Metals System — Bloomberg Ticker Mappings (COMPLETE REWRITE)
+# Single source of truth for ALL tickers — existing and new.
 # Reference: macro_metals_system_memory.md §2.1–2.3
 #
 # Convention: lowercase snake_case logical names → Bloomberg ticker strings.
+# Sections: commodities | rates | equities | fx | risk_indicators
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# 2.1 Metals
+# COMMODITIES
 # -----------------------------------------------------------------------------
-metals:
-  # COMEX Gold
-  gc_fut_front: "GC1 Comdty"
-  gc_fut_second: "GC2 Comdty"
-  gc_fut_third: "GC3 Comdty"
-  xauusd_spot: "XAU Curncy"
+commodities:
+  # ── Precious metals futures ──────────────────────────────────────────────
+  gc_fut_front:       "GC1 Comdty"
+  gc_fut_second:      "GC2 Comdty"
+  gc_fut_third:       "GC3 Comdty"
+  xauusd_spot:        "XAUUSD Curncy"
+  si_fut_front:       "SI1 Comdty"
+  si_fut_second:      "SI2 Comdty"
+  si_fut_third:       "SI3 Comdty"
+  xagusd_spot:        "XAGUSD Curncy"
+  pl_fut_front:       "PL1 Comdty"
+  pl_fut_second:      "PL2 Comdty"
+  xptusd_spot:        "XPTUSD Curncy"
+  pa_fut_front:       "PA1 Comdty"
+  pa_fut_second:      "PA2 Comdty"
+  xpdusd_spot:        "XPDUSD Curncy"
+  lbma_gold_am:       "GOLDLNAM Index"
+  lbma_gold_pm:       "GOLDLNPM Index"
+  lbma_silver_fix:    "SLVRLND Index"
+  lbma_platinum_am:   "PLTMLNAM Index"
+  lbma_palladium_am:  "PDTMLNAM Index"
 
-  # COMEX Silver
-  si_fut_front: "SI1 Comdty"
-  si_fut_second: "SI2 Comdty"
-  si_fut_third: "SI3 Comdty"
-  xagusd_spot: "XAG Curncy"
+  # ── Regional metals ──────────────────────────────────────────────────────
+  shfe_au_front:      "SHFAU1 Index"
+  shfe_au_second:     "SHFAU2 Index"
+  tocom_au_front:     "TOCOMAU1 Index"
 
-  # NYMEX Platinum
-  pl_fut_front: "PL1 Comdty"
-  xptusd_spot: "XPT Curncy"
+  # ── Base metals ──────────────────────────────────────────────────────────
+  hg_fut_front:       "HG1 Comdty"
+  hg_fut_second:      "HG2 Comdty"
+  lme_copper_3m:      "LMCADS Comdty"
+  lme_zinc_3m:        "LMZSDS Comdty"
+  lme_nickel_3m:      "LMNIDS Comdty"
+  lme_aluminium_3m:   "LMAHDY Comdty"
+  lme_lead_3m:        "LMCADY Comdty"
+  lme_tin_3m:         "LMSNDY Comdty"
+  lme_cobalt_3m:      "LOCADY Comdty"
 
-  # NYMEX Palladium
-  pa_fut_front: "PA1 Comdty"
-  xpdusd_spot: "XPD Curncy"
+  # ── Energy ───────────────────────────────────────────────────────────────
+  cl_fut_front:       "CL1 Comdty"
+  cl_fut_second:      "CL2 Comdty"
+  brent_fut_front:    "CO1 Comdty"
+  brent_fut_second:   "CO2 Comdty"
+  ho_fut_front:       "HO1 Comdty"
+  rb_fut_front:       "XB1 Comdty"
+  gasoil_fut_front:   "QS1 Comdty"
+  ng_fut_front:       "NG1 Comdty"
+  ng_fut_second:      "NG2 Comdty"
+  ttf_gas_front:      "TTF1 Comdty"
+  carbon_eua_front:   "MOc1 Comdty"
 
-  # COMEX Copper
-  hg_fut_front: "HG1 Comdty"
+  # ── Agriculture ──────────────────────────────────────────────────────────
+  w_fut_front:        "W 1 Comdty"
+  kw_fut_front:       "KW1 Comdty"
+  c_fut_front:        "C 1 Comdty"
+  s_fut_front:        "S 1 Comdty"
+  bo_fut_front:       "BO1 Comdty"
+  sm_fut_front:       "SM1 Comdty"
+  ct_fut_front:       "CT1 Comdty"
+  cc_fut_front:       "CC1 Comdty"
+  kc_fut_front:       "KC1 Comdty"
+  sb_fut_front:       "SB1 Comdty"
+  lc_fut_front:       "LC1 Comdty"
+  fc_fut_front:       "FC1 Comdty"
+  lh_fut_front:       "LH1 Comdty"
+  oz_fut_front:       "OZ1 Comdty"
+  rr_fut_front:       "RR1 Comdty"
+  lumber_fut_front:   "LB1 Comdty"
 
-  # SHFE Gold (CNY-denominated)
-  shfe_au_front: "AU1 Comdty"
-  shfe_au_second: "AU2 Comdty"
+# -----------------------------------------------------------------------------
+# RATES
+# -----------------------------------------------------------------------------
+rates:
+  # ── SOFR OIS curve — full 15-pillar grid ────────────────────────────────
+  # Lease rates DERIVED: xau_lease_Xm = xau_swap_Xm - sofr_ois_Xm
+  # Do NOT pull lease rates directly from Bloomberg
+  sofr_ois_1w:        "USOSFR1Z Index"
+  sofr_ois_2w:        "USOSFR2Z Index"
+  sofr_ois_1m:        "USOSFRA Index"
+  sofr_ois_2m:        "USOSFRB Index"
+  sofr_ois_3m:        "USOSFRC Index"
+  sofr_ois_4m:        "USOSFRD Index"
+  sofr_ois_5m:        "USOSFRE Index"
+  sofr_ois_6m:        "USOSFRF Index"
+  sofr_ois_7m:        "USOSFRG Index"
+  sofr_ois_8m:        "USOSFRH Index"
+  sofr_ois_9m:        "USOSFRI Index"
+  sofr_ois_10m:       "USOSFRJ Index"
+  sofr_ois_11m:       "USOSFRK Index"
+  sofr_ois_1y:        "USOSFR1 Index"
+  sofr_ois_2y:        "USOSFR2 Index"
 
-  # TOCOM/OSE Gold (JPY-denominated)
-  tocom_au_front: "JGA1 Comdty"
+  # ── SOFR futures strip ───────────────────────────────────────────────────
+  sofr_fut_front:     "SER1 Comdty"
+  sofr_fut_second:    "SER2 Comdty"
+  sofr_fut_third:     "SER3 Comdty"
+  sofr_fut_fourth:    "SER4 Comdty"
 
-  # LBMA reference
-  lbma_gold_am: "GOLDLNAM Index"
-  lbma_gold_pm: "GOLDLNPM Index"
-  lbma_silver_fix: "SLVRLN Index"
+  # ── US Treasury futures ──────────────────────────────────────────────────
+  ust_2y_fut:         "TU1 Comdty"
+  ust_5y_fut:         "FV1 Comdty"
+  ust_10y_fut:        "TY1 Comdty"
+  ust_30y_fut:        "US1 Comdty"
 
-  # Gold lease rates (EFP fair-value model §3.4.1)
-  gold_lease_1m: "GLLR1M Index"
-  gold_lease_3m: "GLLR3M Index"
+  # ── XAU swap rates — full 13-tenor grid (1m–11m + 1y + 2y) ─────────────
+  # Lease rates DERIVED: xau_lease_Xm = xau_swap_Xm - sofr_ois_Xm
+  xau_swap_1m:        "XAUSR1M Index"
+  xau_swap_2m:        "XAUSR2M Index"
+  xau_swap_3m:        "XAUSR3M Index"
+  xau_swap_4m:        "XAUSR4M Index"
+  xau_swap_5m:        "XAUSR5M Index"
+  xau_swap_6m:        "XAUSR6M Index"
+  xau_swap_7m:        "XAUSR7M Index"
+  xau_swap_8m:        "XAUSR8M Index"
+  xau_swap_9m:        "XAUSR9M Index"
+  xau_swap_10m:       "XAUSR10M Index"
+  xau_swap_11m:       "XAUSR11M Index"
+  xau_swap_1y:        "XAUSR1Y Index"
+  xau_swap_2y:        "XAUSR2Y Index"
 
-  # Energy (NYMEX)
-  cl_fut_front: "CL1 Comdty"
-  ng_fut_front: "NG1 Comdty"
+  # ── XAG swap rates — full 13-tenor grid (1m–11m + 1y + 2y) ─────────────
+  # Lease rates DERIVED: xag_lease_Xm = xag_swap_Xm - sofr_ois_Xm
+  xag_swap_1m:        "XAGSR1M Index"
+  xag_swap_2m:        "XAGSR2M Index"
+  xag_swap_3m:        "XAGSR3M Index"
+  xag_swap_4m:        "XAGSR4M Index"
+  xag_swap_5m:        "XAGSR5M Index"
+  xag_swap_6m:        "XAGSR6M Index"
+  xag_swap_7m:        "XAGSR7M Index"
+  xag_swap_8m:        "XAGSR8M Index"
+  xag_swap_9m:        "XAGSR9M Index"
+  xag_swap_10m:       "XAGSR10M Index"
+  xag_swap_11m:       "XAGSR11M Index"
+  xag_swap_1y:        "XAGSR1Y Index"
+  xag_swap_2y:        "XAGSR2Y Index"
 
-  # Agriculture (CBOT)
-  w_fut_front: "W 1 Comdty"
-  c_fut_front: "C 1 Comdty"
-  s_fut_front: "S 1 Comdty"
+  # ── Fed Funds & US yields ────────────────────────────────────────────────
+  fed_funds_target:   "FDTR Index"
+  us_2y_yield:        "USGG2YR Index"
+  us_5y_yield:        "USGG5YR Index"
+  us_10y_yield:       "USGG10YR Index"
+  us_30y_yield:       "USGG30YR Index"
 
-  # LME base metals (regime reference only)
-  lme_copper_3m: "LMCADS03 Comdty"
-  lme_zinc_3m: "LMZSDS03 Comdty"
-  lme_nickel_3m: "LMNIDS03 Comdty"
+  # ── TIPS / Breakevens ────────────────────────────────────────────────────
+  tips_5y_real_yield:  "USGGT05Y Index"
+  tips_10y_real_yield: "USGGT10Y Index"
+  breakeven_5y:        "USBE5Y Index"
+  breakeven_10y:       "USBE10Y Index"
 
-# Contract metadata
+  # ── Global OIS rates ─────────────────────────────────────────────────────
+  tonar_ois_1y:       "JYONAT1Y Index"
+  estr_ois_1y:        "EUSWEC Curncy"
+  sonia_ois_1y:       "BPSWS1 Curncy"
+  corra_ois_1y:       "CDOIS1 Curncy"
+  aonia_ois_1y:       "ADSOC1Y Index"
+
+  # ── Short-end money markets ──────────────────────────────────────────────
+  euribor_3m_fut_front: "ER1 Comdty"
+  sonia_fut_front:      "SQ1 Comdty"
+  nibor_3m:             "NIBR3M Index"
+  stibor_3m:            "STIB3M Index"
+
+  # ── Government bond futures ──────────────────────────────────────────────
+  bund_fut_front:     "RX1 Comdty"
+  bobl_fut_front:     "OE1 Comdty"
+  schatz_fut_front:   "DU1 Comdty"
+  oat_fut_front:      "OAT1 Comdty"
+  btp_fut_front:      "IK1 Comdty"
+  gilt_fut_front:     "G 1 Comdty"
+  jgb_fut_front:      "JB1 Comdty"
+  aus_bond_fut_front: "YM1 Comdty"
+  cad_bond_fut_front: "CN1 Comdty"
+
+  # ── Credit spreads ───────────────────────────────────────────────────────
+  us_ig_spread:       "BAMLC0A0CMEY Index"
+  us_hy_spread:       "BAMLH0A0HYM2 Index"
+  itraxx_europe_5y:   "ITRXEBE5 Index"
+
+  # ── Inflation linkers ────────────────────────────────────────────────────
+  uk_rii_10y:         "GUKG10 Index"
+  fr_oati_10y:        "GFRN10 Index"
+
+  # ── FX carry forwards (all tenors, existing + new) ───────────────────────
+  eurusd_3m_fwd:      "EURUSD3M Curncy"
+  usdjpy_3m_fwd:      "USDJPY3M Curncy"
+  gbpusd_3m_fwd:      "GBPUSD3M Curncy"
+  audusd_3m_fwd:      "AUDUSD3M Curncy"
+  usdcnh_3m_fwd:      "USDCNH3M Curncy"
+  usdcad_3m_fwd:      "CADUSD3M Curncy"
+  usdchf_3m_fwd:      "CHFUSD3M Curncy"
+  usdnok_3m_fwd:      "NOKUSD3M Curncy"
+  usdsek_3m_fwd:      "SEKUSD3M Curncy"
+  usdmxn_3m_fwd:      "MXNUSD3M Curncy"
+  usdsgd_3m_fwd:      "SGDUSD3M Curncy"
+
+# -----------------------------------------------------------------------------
+# EQUITIES
+# -----------------------------------------------------------------------------
+equities:
+  # ── Existing ─────────────────────────────────────────────────────────────
+  es_fut_front:       "ES1 Index"
+  nq_fut_front:       "NQ1 Index"
+  stoxx50_fut_front:  "VG1 Index"
+  nikkei_fut_front:   "NK1 Index"
+
+  # ── Global equity index futures ──────────────────────────────────────────
+  dax_fut_front:      "GX1 Index"
+  ftse_fut_front:     "Z 1 Index"
+  cac_fut_front:      "CF1 Index"
+  smi_fut_front:      "SMI Index"
+  ibex_fut_front:     "IB1 Index"
+  hsi_fut_front:      "HI1 Index"
+  asx_fut_front:      "XP1 Index"
+  kospi_fut_front:    "KM1 Index"
+  tsx_fut_front:      "PT1 Index"
+  omx_fut_front:      "QC1 Index"
+  russell2000_fut:    "RTY1 Index"
+
+# -----------------------------------------------------------------------------
+# FX
+# -----------------------------------------------------------------------------
+fx:
+  # ── G10 spot ─────────────────────────────────────────────────────────────
+  dxy_index:          "DXY Index"
+  eurusd_spot:        "EURUSD Curncy"
+  usdjpy_spot:        "USDJPY Curncy"
+  gbpusd_spot:        "GBPUSD Curncy"
+  audusd_spot:        "AUDUSD Curncy"
+  usdchf_spot:        "USDCHF Curncy"
+  usdcnh_spot:        "USDCNH Curncy"
+  usdcny_spot:        "USDCNY Curncy"
+  nzdusd_spot:        "NZDUSD Curncy"
+  usdcad_spot:        "USDCAD Curncy"
+
+  # ── EM and commodity FX spot ─────────────────────────────────────────────
+  usdnok_spot:        "USDNOK Curncy"
+  usdsek_spot:        "USDSEK Curncy"
+  usdsgd_spot:        "USDSGD Curncy"
+  usdbrl_spot:        "USDBRL Curncy"
+  usdmxn_spot:        "USDMXN Curncy"
+  usdkrw_spot:        "USDKRW Curncy"
+  usdinr_spot:        "USDINR Curncy"
+  usdtry_spot:        "USDTRY Curncy"
+  usdzar_spot:        "USDZAR Curncy"
+  usdpln_spot:        "USDPLN Curncy"
+  usdclp_spot:        "USDCLP Curncy"
+  usdidr_spot:        "USDIDR Curncy"
+
+# -----------------------------------------------------------------------------
+# RISK INDICATORS
+# -----------------------------------------------------------------------------
+risk_indicators:
+  # ── Existing ─────────────────────────────────────────────────────────────
+  vix:                "VIX Index"
+  move_index:         "MOVE Index"
+  gold_vol_index:     "GVZ Index"
+
+  # ── Vol surface & stress indicators ─────────────────────────────────────
+  silver_vol_index:   "XAGVOL Index"
+  oil_vol_index:      "OVX Index"
+  vstoxx_index:       "V2X Index"
+  vxn_index:          "VXN Index"
+  rvx_index:          "RVX Index"
+  skew_index:         "SKEW Index"
+  vxeem_index:        "VXEEM Index"
+  ted_spread:         "TEDSP Index"
+
+# -----------------------------------------------------------------------------
+# CONTRACT METADATA (not BQL tickers — reference only)
+# -----------------------------------------------------------------------------
 metals_contract_size:
   GC: 100        # troy oz
   SI: 5000       # troy oz
@@ -76,85 +293,3 @@ metals_delivery_months:
   SI: [3, 5, 7, 9, 12]
   PL: [1, 4, 7, 10]
   PA: [3, 6, 9, 12]
-
-# -----------------------------------------------------------------------------
-# 2.2 FX
-# -----------------------------------------------------------------------------
-fx:
-  dxy_index: "DXY Index"
-  eurusd_spot: "EURUSD Curncy"
-  usdjpy_spot: "USDJPY Curncy"
-  gbpusd_spot: "GBPUSD Curncy"
-  audusd_spot: "AUDUSD Curncy"
-  usdchf_spot: "USDCHF Curncy"
-  usdcnh_spot: "USDCNH Curncy"
-  usdcny_spot: "USDCNY Curncy"         # onshore reference only
-  nzdusd_spot: "NZDUSD Curncy"
-  usdcad_spot: "USDCAD Curncy"
-
-# FX forwards (3M tenor, for carry calculation)
-fx_forwards_3m:
-  eurusd_3m_fwd: "EUR3M Curncy"
-  usdjpy_3m_fwd: "JPY3M Curncy"
-  gbpusd_3m_fwd: "GBP3M Curncy"
-  audusd_3m_fwd: "AUD3M Curncy"
-  usdcnh_3m_fwd: "CCN3M Curncy"
-
-# -----------------------------------------------------------------------------
-# 2.3 Rates
-# -----------------------------------------------------------------------------
-rates:
-  # SOFR OIS (short end)
-  sofr_ois_1m: "USOSFRM Curncy"
-  sofr_ois_3m: "USOSFRA Curncy"
-  sofr_ois_6m: "USOSFRB Curncy"
-  sofr_ois_1y: "USOSFR1 Curncy"
-  sofr_ois_2y: "USOSFR2 Curncy"
-
-  # SOFR futures (front 4 quarterly)
-  sofr_fut_front: "SFR Comdty"
-  sofr_fut_second: "SR32 Comdty"
-  sofr_fut_third: "SR33 Comdty"
-  sofr_fut_fourth: "SR34 Comdty"
-
-  # Fed Funds
-  fed_funds_target: "FDTR Index"
-
-  # US Treasuries (yields)
-  us_2y_yield: "USGG2YR Index"
-  us_5y_yield: "USGG5YR Index"
-  us_10y_yield: "USGG10YR Index"
-  us_30y_yield: "USGG30YR Index"
-
-  # TIPS / Breakevens
-  tips_5y_real_yield: "USGGT05Y Index"
-  tips_10y_real_yield: "USGGT10Y Index"
-  breakeven_5y: "USGGBE05 Index"
-  breakeven_10y: "USGGBE10 Index"
-
-  # US Treasury futures (generic front)
-  ust_2y_fut: "TU1 Comdty"
-  ust_5y_fut: "FV1 Comdty"
-  ust_10y_fut: "TY1 Comdty"
-  ust_30y_fut: "US1 Comdty"
-
-  # Foreign OIS (cross-jurisdiction funding differentials)
-  tonar_ois_1y: "JYSO1 Curncy"
-  estr_ois_1y: "EUESTA1 Curncy"
-
-# -----------------------------------------------------------------------------
-# 2.4 Equity Index Futures
-# -----------------------------------------------------------------------------
-equities:
-  es_fut_front: "ES1 Index"
-  nq_fut_front: "NQ1 Index"
-  stoxx50_fut_front: "VG1 Index"
-  nikkei_fut_front: "NK1 Index"
-
-# -----------------------------------------------------------------------------
-# Volatility / Risk indicators
-# -----------------------------------------------------------------------------
-risk_indicators:
-  vix: "VIX Index"
-  move_index: "MOVE Index"
-  gold_vol_index: "GVZ Index"
