@@ -1,0 +1,6 @@
+label,n_days,total_pnl,ann_return,ann_vol,sharpe,max_dd,n_trades,hit_rate,avg_win,avg_loss,win_loss_ratio,avg_hold_days,max_win_streak,max_loss_streak,lookback,entry_z,exit_z,max_hold,spread,spread_label,metal
+si_si_cal_12_lb60_ez2.5_xz0.0_mh20,2129,1.06,0.12,0.168,0.743,-0.16,30,0.667,0.071,-0.027,2.57,18.3,7,4,60,2.5,0.0,20,si_cal_12,SI1-SI2 calendar,silver
+si_si_cal_23_lb20_ez2.5_xz0.0_mh20,2129,0.18,0.02,0.109,0.191,-0.26,47,0.532,0.024,-0.019,1.26,17.0,8,5,20,2.5,0.0,20,si_cal_23,SI2-SI3 calendar,silver
+si_si_fly_123_lb120_ez1.5_xz0.5_mh40,2129,0.92,0.11,0.151,0.724,-0.1,27,0.593,0.058,-0.034,1.71,34.3,6,2,120,1.5,0.5,40,si_fly_123,SI butterfly,silver
+si_si_cal_12_norm_lb60_ez1.5_xz0.0_mh40,2129,638.96,75.63,63.146,1.198,-63.71,48,0.833,17.572,-14.492,1.21,26.2,17,2,60,1.5,0.0,40,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+si_si_fly_123_norm_lb120_ez1.0_xz0.5_mh40,2129,673.22,79.69,76.106,1.047,-63.21,51,0.647,16.285,-11.332,1.44,27.0,14,4,120,1.0,0.5,40,si_fly_123_norm,SI butterfly normalised (bps),silver

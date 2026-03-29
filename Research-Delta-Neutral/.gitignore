@@ -1,0 +1,21 @@
+# Large raw data files (source from Bloomberg/BQuant)
+01_data_raw/data-2.csv
+01_data_raw/data_contract_dates.csv
+
+# Generated clean data and features (regenerate by running scripts in order)
+02_data_clean/
+03_features_curve/*.csv
+04_features_ratio/
+08_fair_value/fair_value_features.csv
+
+# Large grid-scan outputs (regenerate by running backtest scripts)
+05_research_curve/curve_grid_results.csv
+05_research_curve/silver_grid_results.csv
+06_research_ratio/ratio_grid_results.csv
+08_fair_value/fv_backtest_results.csv
+09_regime/regime_signals.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

@@ -1,0 +1,46 @@
+year,total_pnl,ann_vol,sharpe,max_dd,n_entries,spread,spread_label,metal
+2018,0.04,0.033,1.25,-0.02,4,si_cal_12,SI1-SI2 calendar,silver
+2019,-0.05,0.025,-2.09,-0.06,3,si_cal_12,SI1-SI2 calendar,silver
+2020,0.03,0.145,0.23,-0.09,3,si_cal_12,SI1-SI2 calendar,silver
+2021,0.09,0.088,1.01,-0.03,5,si_cal_12,SI1-SI2 calendar,silver
+2022,0.26,0.126,2.03,-0.03,5,si_cal_12,SI1-SI2 calendar,silver
+2023,0.22,0.165,1.31,-0.06,5,si_cal_12,SI1-SI2 calendar,silver
+2024,0.04,0.081,0.44,-0.05,5,si_cal_12,SI1-SI2 calendar,silver
+2025,0.1,0.267,0.37,-0.15,3,si_cal_12,SI1-SI2 calendar,silver
+2026,0.32,0.704,2.69,-0.04,1,si_cal_12,SI1-SI2 calendar,silver
+2018,-0.03,0.021,-1.31,-0.03,3,si_cal_23,SI2-SI3 calendar,silver
+2019,0.02,0.052,0.45,-0.04,6,si_cal_23,SI2-SI3 calendar,silver
+2020,0.05,0.114,0.42,-0.12,9,si_cal_23,SI2-SI3 calendar,silver
+2021,0.01,0.047,0.18,-0.05,6,si_cal_23,SI2-SI3 calendar,silver
+2022,-0.05,0.058,-0.85,-0.07,5,si_cal_23,SI2-SI3 calendar,silver
+2023,-0.03,0.046,-0.59,-0.04,3,si_cal_23,SI2-SI3 calendar,silver
+2024,-0.15,0.07,-2.03,-0.15,8,si_cal_23,SI2-SI3 calendar,silver
+2025,0.12,0.059,1.88,-0.03,7,si_cal_23,SI2-SI3 calendar,silver
+2026,0.23,0.637,2.2,-0.05,1,si_cal_23,SI2-SI3 calendar,silver
+2018,-0.04,0.03,-1.19,-0.04,1,si_fly_123,SI butterfly,silver
+2019,-0.03,0.044,-0.68,-0.07,4,si_fly_123,SI butterfly,silver
+2020,0.36,0.199,1.76,-0.07,5,si_fly_123,SI butterfly,silver
+2021,0.03,0.078,0.32,-0.05,3,si_fly_123,SI butterfly,silver
+2022,0.17,0.163,0.99,-0.1,7,si_fly_123,SI butterfly,silver
+2023,0.11,0.124,0.85,-0.05,4,si_fly_123,SI butterfly,silver
+2024,0.0,0.059,0.02,-0.06,3,si_fly_123,SI butterfly,silver
+2025,0.33,0.303,1.04,-0.06,4,si_fly_123,SI butterfly,silver
+2026,0.0,0.0,,0.0,1,si_fly_123,SI butterfly,silver
+2018,7.55,36.725,0.2,-24.27,5,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2019,19.64,32.365,0.59,-17.57,5,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2020,111.47,109.287,0.98,-60.62,5,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2021,47.81,33.823,1.36,-7.12,9,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2022,232.45,77.461,2.91,-18.82,11,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2023,56.77,42.827,1.28,-23.07,7,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2024,74.87,70.327,1.02,-48.55,9,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2025,92.79,63.629,1.41,-20.7,7,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2026,-4.39,31.507,-0.84,-10.62,1,si_cal_12_norm,SI1-SI2 normalised (bps),silver
+2018,10.98,34.004,0.31,-35.11,4,si_fly_123_norm,SI butterfly normalised (bps),silver
+2019,28.18,39.074,0.7,-44.77,8,si_fly_123_norm,SI butterfly normalised (bps),silver
+2020,288.19,134.112,2.07,-47.08,11,si_fly_123_norm,SI butterfly normalised (bps),silver
+2021,33.26,33.948,0.95,-17.93,10,si_fly_123_norm,SI butterfly normalised (bps),silver
+2022,121.29,84.682,1.39,-63.21,12,si_fly_123_norm,SI butterfly normalised (bps),silver
+2023,99.66,75.731,1.28,-23.73,6,si_fly_123_norm,SI butterfly normalised (bps),silver
+2024,50.09,81.38,0.59,-56.92,7,si_fly_123_norm,SI butterfly normalised (bps),silver
+2025,50.48,75.556,0.65,-51.95,7,si_fly_123_norm,SI butterfly normalised (bps),silver
+2026,-8.92,23.255,-2.3,-11.37,1,si_fly_123_norm,SI butterfly normalised (bps),silver

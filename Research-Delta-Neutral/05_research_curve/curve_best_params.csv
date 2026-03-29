@@ -1,0 +1,6 @@
+label,n_days,total_pnl,ann_return,ann_vol,sharpe,max_dd,n_trades,hit_rate,avg_win,avg_loss,win_loss_ratio,avg_hold_days,max_win_streak,max_loss_streak,lookback,entry_z,exit_z,max_hold,spread,spread_label
+cal_12_lb120_ez2.5_xz0.5_mh20,2129,38.7,4.58,8.036,0.57,-12.4,23,0.391,6.256,-1.121,5.58,20.0,3,6,120,2.5,0.5,20,cal_12,GC1-GC2 calendar
+cal_23_lb120_ez2.5_xz0.5_mh40,2129,-10.2,-1.21,4.592,-0.263,-14.1,15,0.467,1.457,-2.025,0.72,34.6,4,3,120,2.5,0.5,40,cal_23,GC2-GC3 calendar
+fly_123_lb120_ez2.5_xz0.0_mh40,2129,22.4,2.65,10.206,0.26,-26.1,12,0.667,2.988,-2.175,1.37,34.8,4,2,120,2.5,0.0,40,fly_123,GC butterfly
+cal_12_norm_lb60_ez2.5_xz0.5_mh20,2129,297.11,35.17,41.761,0.842,-30.13,28,0.786,15.108,-6.169,2.45,14.4,6,2,60,2.5,0.5,20,cal_12_norm,GC1-GC2 normalised (bps)
+fly_123_norm_lb120_ez1.0_xz0.0_mh40,2129,327.34,38.75,67.144,0.577,-160.2,57,0.684,6.295,-3.335,1.89,22.4,8,4,120,1.0,0.0,40,fly_123_norm,GC butterfly normalised (bps)

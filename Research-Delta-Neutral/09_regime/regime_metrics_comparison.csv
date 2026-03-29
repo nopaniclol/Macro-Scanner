@@ -1,0 +1,9 @@
+label,n_days,total_pnl,ann_return,ann_vol,sharpe,max_dd,n_trades,hit_rate,avg_win,avg_loss,win_loss_ratio,avg_hold_days,max_win_streak,max_loss_streak,strategy,model,filter,spread,use_regime
+GC_cal12_naive,2129,309.15,36.59,41.723,0.877,-19.41,27,0.815,15.108,-4.995,3.02,13.9,6,1,GC_cal12_naive,naive,SOFR_filter,cal_12_norm,True
+SI_cal12_naive,2129,638.96,75.63,63.146,1.198,-63.71,48,0.833,17.572,-14.492,1.21,26.2,17,2,SI_cal12_naive,naive,no_filter,si_cal_12_norm,False
+GC_fly_naive,2129,327.34,38.75,67.144,0.577,-160.2,57,0.684,6.295,-3.335,1.89,22.4,8,4,GC_fly_naive,naive,no_filter,fly_123_norm,False
+SI_fly_naive,2129,673.22,79.69,76.106,1.047,-63.21,51,0.647,16.285,-11.332,1.44,27.0,14,4,SI_fly_naive,naive,no_filter,si_fly_123_norm,False
+GC_cal12_fv,2129,303.8,35.96,66.643,0.54,-122.95,55,0.691,5.141,-1.707,3.01,20.8,8,7,GC_cal12_fv,fv,SOFR_filter,cal_12_norm,True
+SI_cal12_fv,2129,442.03,52.32,54.675,0.957,-72.53,35,0.514,22.306,-2.824,7.9,23.1,7,7,SI_cal12_fv,fv,no_filter,si_cal_12_norm,False
+GC_fly_fv,2129,262.01,31.01,63.346,0.49,-121.1,43,0.674,9.567,-2.414,3.96,25.7,7,2,GC_fly_fv,fv,no_filter,fly_123_norm,False
+SI_fly_fv,2129,390.32,46.2,59.422,0.777,-50.87,25,0.64,23.524,-6.824,3.45,37.0,11,2,SI_fly_fv,fv,no_filter,si_fly_123_norm,False
