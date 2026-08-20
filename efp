@@ -1,0 +1,2298 @@
+# ─────────────────────────────────────────────────────────────
+#  CELL 1 — Imports, BQL Service, Styling
+# ─────────────────────────────────────────────────────────────
+
+import bql
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from IPython.display import display, HTML, clear_output
+import ipywidgets as widgets
+from datetime import datetime, date
+import warnings
+warnings.filterwarnings('ignore')
+
+
+# ─────────────────────────────────────────────────────────────
+#  Styling
+# ─────────────────────────────────────────────────────────────
+
+BG_DARK  = '#0d1117'
+BG_PANEL = '#161b22'
+BG_CARD  = '#1c2128'
+
+C_GOLD   = '#FFD700'
+C_SILVER = '#C0C0C0'
+C_PLAT   = '#58a6ff'
+C_PALL   = '#3fb950'
+
+C_RED    = '#f85149'
+C_GREEN  = '#3fb950'
+C_AMBER  = '#d29922'
+C_BLUE   = '#58a6ff'
+C_MUTED  = '#8b949e'
+C_TEXT   = '#e6edf3'
+C_GRID   = '#30363d'
+
+METAL_COLORS = {
+    'XAU': C_GOLD,
+    'XAG': C_SILVER,
+    'XPT': C_PLAT,
+    'XPD': C_PALL,
+}
+
+METAL_NAMES = {
+    'XAU': 'Gold',
+    'XAG': 'Silver',
+    'XPT': 'Platinum',
+    'XPD': 'Palladium',
+}
+
+plt.rcParams.update({
+    'figure.facecolor': BG_DARK,
+    'axes.facecolor': BG_PANEL,
+    'axes.edgecolor': C_GRID,
+    'axes.labelcolor': C_MUTED,
+    'xtick.color': C_MUTED,
+    'ytick.color': C_MUTED,
+    'text.color': C_TEXT,
+    'grid.color': C_GRID,
+    'grid.linestyle': '--',
+    'grid.alpha': 0.5,
+    'lines.linewidth': 1.8,
+    'font.family': 'monospace',
+    'font.size': 9,
+    'axes.titlesize': 10,
+    'axes.titlecolor': C_TEXT,
+    'axes.titleweight': 'bold',
+    'figure.dpi': 120,
+    'legend.framealpha': 0.3,
+    'legend.facecolor': BG_CARD,
+    'legend.edgecolor': C_GRID,
+})
+
+bq = bql.Service()
+TODAY = date.today()
+T_STR = TODAY.strftime('%Y-%m-%d')
+
+print(f"✅ BQL Service ready | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 2 — Ticker Config
+# ─────────────────────────────────────────────────────────────
+
+SPOT_TICKERS = {
+    'XAU': 'XAUUSD Curncy',
+    'XAG': 'XAGUSD Curncy',
+    'XPT': 'XPTUSD Curncy',
+    'XPD': 'XPDUSD Curncy',
+}
+
+FUTURES_CHAIN = {
+    'XAU': {
+        'C1': 'GC1 Comdty',
+        'C2': 'GC2 Comdty',
+        'C3': 'GC3 Comdty',
+        'C4': 'GC4 Comdty',
+    },
+    'XAG': {
+        'C1': 'SI1 Comdty',
+        'C2': 'SI2 Comdty',
+        'C3': 'SI3 Comdty',
+        'C4': 'SI4 Comdty',
+    },
+    'XPT': {
+        'C1': 'PL1 Comdty',
+        'C2': 'PL2 Comdty',
+        'C3': 'PL3 Comdty',
+        'C4': 'PL4 Comdty',
+    },
+    'XPD': {
+        'C1': 'PA1 Comdty',
+        'C2': 'PA2 Comdty',
+        'C3': 'PA3 Comdty',
+        'C4': 'PA4 Comdty',
+    },
+}
+
+CONTRACTS = ['C1', 'C2', 'C3', 'C4']
+METALS = ['XAU', 'XAG', 'XPT', 'XPD']
+
+print("✅ Config loaded")
+
+for m in METALS:
+    tkrs = ' | '.join(f"{k}: {v}" for k, v in FUTURES_CHAIN[m].items())
+    print(f"  {m} spot: {SPOT_TICKERS[m]} | futures: {tkrs}")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 3 — SOFR Curve + Persistent Metal Forward / Funding Config
+# ─────────────────────────────────────────────────────────────
+
+HISTORY_FILE = 'efp_history.csv'
+
+FORWARD_CURVE_LATEST_FILE = 'pm_forward_curves_latest.csv'
+FORWARD_CURVE_HISTORY_FILE = 'pm_forward_curves_history.csv'
+
+FUNDING_SETTINGS_LATEST_FILE = 'pm_funding_settings_latest.csv'
+FUNDING_SETTINGS_HISTORY_FILE = 'pm_funding_settings_history.csv'
+
+# 0.7bp p.a. = 0.007%
+INSURANCE_RATE_PCT = 0.007
+
+TENOR_DAYS = {
+    '1W': 7,
+    '2W': 14,
+    '1M': 30,
+    '2M': 60,
+    '3M': 90,
+    '4M': 120,
+    '5M': 150,
+    '6M': 180,
+    '7M': 210,
+    '8M': 240,
+    '9M': 270,
+    '10M': 300,
+    '11M': 330,
+    '12M': 360,
+    '1Y': 360,
+    '18M': 540,
+    '2Y': 720,
+    '3Y': 1080,
+}
+
+SOFR_CURVE_TICKERS = {
+    '1W':  'USOSFR1Z Curncy',
+    '2W':  'USOSFR2Z Curncy',
+    '1M':  'USOSFRA Curncy',
+    '2M':  'USOSFRB Curncy',
+    '3M':  'USOSFRC Curncy',
+    '4M':  'USOSFRD Curncy',
+    '5M':  'USOSFRE Curncy',
+    '6M':  'USOSFRF Curncy',
+    '7M':  'USOSFRG Curncy',
+    '8M':  'USOSFRH Curncy',
+    '9M':  'USOSFRI Curncy',
+    '10M': 'USOSFRJ Curncy',
+    '11M': 'USOSFRK Curncy',
+    '1Y':  'USOSFR1 Curncy',
+    '18M': 'USOSFR1F Curncy',
+    '2Y':  'USOSFR2 Curncy',
+    '3Y':  'USOSFR3 Curncy',
+}
+
+DEFAULT_METAL_FORWARD_CURVES = {
+    'XAU': {
+        '1M': 1.00,
+        '2M': 1.05,
+        '3M': 1.10,
+        '6M': 1.20,
+        '9M': 1.28,
+        '12M': 1.35,
+    },
+    'XAG': {
+        '1M': 2.00,
+        '2M': 2.10,
+        '3M': 2.20,
+        '6M': 2.35,
+        '9M': 2.42,
+        '12M': 2.50,
+    },
+    'XPT': {
+        '1M': 1.50,
+        '2M': 1.60,
+        '3M': 1.70,
+        '6M': 1.85,
+        '9M': 1.92,
+        '12M': 2.00,
+    },
+    'XPD': {
+        '1M': 1.75,
+        '2M': 1.85,
+        '3M': 1.95,
+        '6M': 2.10,
+        '9M': 2.18,
+        '12M': 2.25,
+    },
+}
+
+METAL_FORWARD_TENORS = ['1M', '2M', '3M', '6M', '9M', '12M']
+
+
+def normalise_forward_curves(curves):
+    clean = {}
+
+    for metal in METALS:
+        clean[metal] = {}
+
+        for tenor in METAL_FORWARD_TENORS:
+            default_val = DEFAULT_METAL_FORWARD_CURVES.get(metal, {}).get(tenor, np.nan)
+
+            try:
+                val = curves.get(metal, {}).get(tenor, default_val)
+                clean[metal][tenor] = float(val)
+            except Exception:
+                clean[metal][tenor] = float(default_val)
+
+    return clean
+
+
+def load_saved_forward_curves():
+    if not os.path.exists(FORWARD_CURVE_LATEST_FILE):
+        return normalise_forward_curves(DEFAULT_METAL_FORWARD_CURVES)
+
+    try:
+        df = pd.read_csv(FORWARD_CURVE_LATEST_FILE)
+
+        required_cols = ['Metal', 'Tenor', 'Rate (%)']
+
+        if not all(c in df.columns for c in required_cols):
+            return normalise_forward_curves(DEFAULT_METAL_FORWARD_CURVES)
+
+        curves = {}
+
+        for metal in METALS:
+            curves[metal] = {}
+            sub = df[df['Metal'] == metal]
+
+            for tenor in METAL_FORWARD_TENORS:
+                row = sub[sub['Tenor'] == tenor]
+
+                if not row.empty:
+                    curves[metal][tenor] = float(row.iloc[-1]['Rate (%)'])
+                else:
+                    curves[metal][tenor] = DEFAULT_METAL_FORWARD_CURVES[metal][tenor]
+
+        return normalise_forward_curves(curves)
+
+    except Exception as e:
+        print(f"⚠ Could not load saved forward curves. Using defaults. Error: {e}")
+        return normalise_forward_curves(DEFAULT_METAL_FORWARD_CURVES)
+
+
+def load_saved_funding_settings():
+    default_settings = {
+        'SOFR Fallback (%)': 4.30,
+        'SOFR Spread (%)': 0.00,
+    }
+
+    if not os.path.exists(FUNDING_SETTINGS_LATEST_FILE):
+        return default_settings
+
+    try:
+        df = pd.read_csv(FUNDING_SETTINGS_LATEST_FILE)
+
+        if df.empty:
+            return default_settings
+
+        latest = df.iloc[-1]
+
+        return {
+            'SOFR Fallback (%)': float(latest.get('SOFR Fallback (%)', default_settings['SOFR Fallback (%)'])),
+            'SOFR Spread (%)': float(latest.get('SOFR Spread (%)', default_settings['SOFR Spread (%)'])),
+        }
+
+    except Exception as e:
+        print(f"⚠ Could not load saved funding settings. Using defaults. Error: {e}")
+        return default_settings
+
+
+SAVED_METAL_FORWARD_CURVES = load_saved_forward_curves()
+SAVED_FUNDING_SETTINGS = load_saved_funding_settings()
+
+SOFR_FALLBACK_WIDGET = widgets.FloatText(
+    value=SAVED_FUNDING_SETTINGS['SOFR Fallback (%)'],
+    description='SOFR Fallback %',
+    layout=widgets.Layout(width='220px')
+)
+
+SOFR_SPREAD_WIDGET = widgets.FloatText(
+    value=SAVED_FUNDING_SETTINGS['SOFR Spread (%)'],
+    description='SOFR Spread %',
+    layout=widgets.Layout(width='220px')
+)
+
+FWD_INPUTS = {}
+
+AUTO_SAVE_ENABLED = False
+
+
+def auto_save(change):
+    global AUTO_SAVE_ENABLED
+
+    if not AUTO_SAVE_ENABLED:
+        return
+
+    try:
+        save_forward_curves(verbose=False)
+    except Exception:
+        pass
+
+
+for metal in METALS:
+    FWD_INPUTS[metal] = {}
+
+    for tenor in METAL_FORWARD_TENORS:
+        saved_rate = SAVED_METAL_FORWARD_CURVES[metal][tenor]
+
+        FWD_INPUTS[metal][tenor] = widgets.FloatText(
+            value=saved_rate,
+            description=f'{metal} {tenor}',
+            layout=widgets.Layout(width='145px')
+        )
+
+
+def get_current_forward_curves():
+    curves = {}
+
+    for metal in METALS:
+        curves[metal] = {}
+
+        for tenor in METAL_FORWARD_TENORS:
+            widget = FWD_INPUTS[metal][tenor]
+            curves[metal][tenor] = float(widget.value)
+
+    return normalise_forward_curves(curves)
+
+
+def get_sofr_spread():
+    return float(SOFR_SPREAD_WIDGET.value)
+
+
+def save_forward_curves(verbose=True):
+    curves = get_current_forward_curves()
+
+    if verbose:
+        print("\n=== VALUES BEING SAVED ===")
+
+        for metal in METALS:
+            print(metal, curves[metal])
+
+        print("SOFR Fallback:", SOFR_FALLBACK_WIDGET.value)
+        print("SOFR Spread:", SOFR_SPREAD_WIDGET.value)
+
+    ts = datetime.now().replace(second=0, microsecond=0)
+
+    curve_rows = []
+
+    for metal in METALS:
+        for tenor in METAL_FORWARD_TENORS:
+            curve_rows.append({
+                'Timestamp': ts,
+                'Date': ts.date(),
+                'Metal': metal,
+                'Metal Name': METAL_NAMES.get(metal, metal),
+                'Tenor': tenor,
+                'Days': TENOR_DAYS.get(tenor, np.nan),
+                'Rate (%)': curves[metal][tenor],
+            })
+
+    latest_curve_df = pd.DataFrame(curve_rows)
+    latest_curve_df.to_csv(FORWARD_CURVE_LATEST_FILE, index=False)
+
+    try:
+        old_curve_hist = pd.read_csv(FORWARD_CURVE_HISTORY_FILE)
+    except Exception:
+        old_curve_hist = pd.DataFrame()
+
+    curve_hist = pd.concat([old_curve_hist, latest_curve_df], ignore_index=True)
+
+    dedupe_cols = ['Timestamp', 'Metal', 'Tenor']
+    existing_cols = [c for c in dedupe_cols if c in curve_hist.columns]
+
+    if existing_cols:
+        curve_hist = curve_hist.drop_duplicates(subset=existing_cols, keep='last')
+
+    curve_hist.to_csv(FORWARD_CURVE_HISTORY_FILE, index=False)
+
+    settings_row = pd.DataFrame([{
+        'Timestamp': ts,
+        'Date': ts.date(),
+        'SOFR Fallback (%)': float(SOFR_FALLBACK_WIDGET.value),
+        'SOFR Spread (%)': float(SOFR_SPREAD_WIDGET.value),
+        'Insurance (%)': INSURANCE_RATE_PCT,
+    }])
+
+    settings_row.to_csv(FUNDING_SETTINGS_LATEST_FILE, index=False)
+
+    try:
+        old_settings_hist = pd.read_csv(FUNDING_SETTINGS_HISTORY_FILE)
+    except Exception:
+        old_settings_hist = pd.DataFrame()
+
+    settings_hist = pd.concat([old_settings_hist, settings_row], ignore_index=True)
+
+    if 'Timestamp' in settings_hist.columns:
+        settings_hist = settings_hist.drop_duplicates(subset=['Timestamp'], keep='last')
+
+    settings_hist.to_csv(FUNDING_SETTINGS_HISTORY_FILE, index=False)
+
+    if verbose:
+        print(f"✅ Forward curves saved to {FORWARD_CURVE_LATEST_FILE}")
+        print(f"✅ Forward curve history updated: {FORWARD_CURVE_HISTORY_FILE}")
+        print(f"✅ Funding settings saved to {FUNDING_SETTINGS_LATEST_FILE}")
+        print(f"✅ Funding settings history updated: {FUNDING_SETTINGS_HISTORY_FILE}")
+
+
+# Register auto-save observers only after save_forward_curves exists.
+for metal in METALS:
+    for tenor in METAL_FORWARD_TENORS:
+        FWD_INPUTS[metal][tenor].observe(
+            auto_save,
+            names='value'
+        )
+
+SOFR_SPREAD_WIDGET.observe(
+    auto_save,
+    names='value'
+)
+
+SOFR_FALLBACK_WIDGET.observe(
+    auto_save,
+    names='value'
+)
+
+AUTO_SAVE_ENABLED = True
+
+
+def display_forward_inputs():
+    rows = []
+
+    rows.append(widgets.HTML(
+        value=f"""
+        <div style="background-color:{BG_CARD}; color:{C_TEXT}; padding:10px; margin:10px 0;">
+            <b>Manual Inputs</b><br>
+            Metal forward rates are annualised % inputs for 1M / 2M / 3M / 6M / 9M / 12M.<br>
+            SOFR is pulled from Bloomberg using the USOSFR OIS curve tickers.<br>
+            <b>SOFR Spread</b> is used only in the Cash & Carry monitor to reflect your funding cost.<br>
+            Fallback SOFR is only used if the SOFR curve cannot be fetched.<br><br>
+
+            <b>EFP RV:</b> EFP Mid − OTC<br>
+            <b>OTC:</b> Spot × Metal Forward × Days / 360<br>
+            <b>Cash & Carry Funding Cost:</b> SOFR + SOFR Spread<br>
+            <b>Cash & Carry Cost:</b> Spot × (Funding Cost + Insurance) × Days / 360<br>
+            Insurance = {INSURANCE_RATE_PCT:.3f}% p.a. = 0.7bp<br><br>
+
+            <b>Persistence:</b> Forward curve inputs and funding spread are auto-saved when values change.
+        </div>
+        """
+    ))
+
+    rows.append(widgets.HBox([SOFR_FALLBACK_WIDGET, SOFR_SPREAD_WIDGET]))
+
+    for metal in METALS:
+        rows.append(widgets.HTML(
+            value=f"<div style='color:{METAL_COLORS[metal]}; font-weight:bold; margin-top:8px;'>{METAL_NAMES[metal]} ({metal}) Forward Curve</div>"
+        ))
+
+        curve_box = widgets.HBox(
+            [FWD_INPUTS[metal][tenor] for tenor in METAL_FORWARD_TENORS]
+        )
+
+        rows.append(curve_box)
+
+    display(widgets.VBox(rows))
+
+
+print("✅ SOFR curve config + persistent metal forward / funding input config loaded")
+print(f"✅ Loaded forward curves from: {FORWARD_CURVE_LATEST_FILE if os.path.exists(FORWARD_CURVE_LATEST_FILE) else 'defaults'}")
+print(f"✅ Loaded funding settings from: {FUNDING_SETTINGS_LATEST_FILE if os.path.exists(FUNDING_SETTINGS_LATEST_FILE) else 'defaults'}")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 4 — Market Data Helper Functions
+# ─────────────────────────────────────────────────────────────
+
+def fetch_bid_ask(tickers):
+    if isinstance(tickers, str):
+        tickers = [tickers]
+
+    tkr_str = ', '.join(f"'{t}'" for t in tickers)
+    result = {t: {'bid': np.nan, 'ask': np.nan, 'mid': np.nan} for t in tickers}
+
+    try:
+        resp_bid = bq.execute(f"get(px_bid) for([{tkr_str}])")
+        df_bid = resp_bid[0].df()
+
+        resp_ask = bq.execute(f"get(px_ask) for([{tkr_str}])")
+        df_ask = resp_ask[0].df()
+
+        for t in tickers:
+            try:
+                bid = df_bid.loc[t, 'px_bid'] if 'px_bid' in df_bid.columns else np.nan
+                ask = df_ask.loc[t, 'px_ask'] if 'px_ask' in df_ask.columns else np.nan
+
+                bid = float(bid) if pd.notna(bid) else np.nan
+                ask = float(ask) if pd.notna(ask) else np.nan
+
+                if not (np.isnan(bid) or np.isnan(ask)):
+                    result[t] = {
+                        'bid': bid,
+                        'ask': ask,
+                        'mid': (bid + ask) / 2,
+                    }
+
+            except Exception:
+                pass
+
+    except Exception as e:
+        print(f"  ⚠ fetch_bid_ask error: {e}")
+
+    return result
+
+
+def fetch_last(tickers):
+    if isinstance(tickers, str):
+        tickers = [tickers]
+
+    tkr_str = ', '.join(f"'{t}'" for t in tickers)
+    result = {t: np.nan for t in tickers}
+
+    try:
+        resp = bq.execute(f"get(px_last) for([{tkr_str}])")
+        df = resp[0].df()
+
+        for t in tickers:
+            try:
+                val = df.loc[t, 'px_last'] if 'px_last' in df.columns else np.nan
+                result[t] = float(val) if pd.notna(val) else np.nan
+            except Exception:
+                result[t] = np.nan
+
+    except Exception as e:
+        print(f"  ⚠ fetch_last error: {e}")
+
+    return result
+
+
+def fetch_fnd(tickers):
+    tkr_str = ', '.join(f"'{t}'" for t in tickers)
+    result = {}
+
+    try:
+        resp = bq.execute(f"get(fut_notice_first) for([{tkr_str}])")
+        df = resp[0].df()
+
+        for t in tickers:
+            try:
+                val = df.loc[t, 'fut_notice_first']
+                result[t] = pd.Timestamp(val).date() if pd.notna(val) else None
+            except Exception:
+                result[t] = None
+
+    except Exception as e:
+        print(f"  ⚠ fetch_fnd error: {e}")
+
+    return result
+
+
+def fetch_fut_month_yr(tickers):
+    tkr_str = ', '.join(f"'{t}'" for t in tickers)
+    result = {}
+
+    try:
+        resp = bq.execute(f"get(fut_month_yr) for([{tkr_str}])")
+        df = resp[0].df()
+
+        for t in tickers:
+            try:
+                val = df.loc[t, 'fut_month_yr']
+                result[t] = str(val) if pd.notna(val) else '—'
+            except Exception:
+                result[t] = '—'
+
+        print("✓ FUT_MONTH_YR fetched successfully")
+
+    except Exception as e:
+        print(f"⚠ Error fetching FUT_MONTH_YR: {e}")
+        for t in tickers:
+            result[t] = '—'
+
+    return result
+
+
+def days_to_value(fnd_date, spot_dt):
+    """
+    Current convention:
+        Days = FND + 1 business day - Spot value date
+    """
+    if fnd_date is None:
+        return None
+
+    fnd_value = pd.bdate_range(start=fnd_date, periods=2)[-1].date()
+    return max((fnd_value - spot_dt).days, 1)
+
+
+print("✅ Market data helper functions loaded")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 5 — SOFR / Metal Forward / RV Helper Functions
+# ─────────────────────────────────────────────────────────────
+
+def fetch_sofr_curve():
+    tickers = list(SOFR_CURVE_TICKERS.values())
+    px = fetch_last(tickers)
+
+    curve = {}
+
+    for tenor, ticker in SOFR_CURVE_TICKERS.items():
+        val = px.get(ticker, np.nan)
+
+        if pd.notna(val):
+            curve[tenor] = float(val)
+
+    return curve
+
+
+def fallback_sofr_curve():
+    fallback = float(SOFR_FALLBACK_WIDGET.value)
+
+    return {
+        tenor: fallback
+        for tenor in SOFR_CURVE_TICKERS.keys()
+    }
+
+
+def interpolate_curve_by_days(curve, days):
+    if days is None or days == '—' or pd.isna(days):
+        return np.nan
+
+    points = []
+
+    for tenor, rate in curve.items():
+        d = TENOR_DAYS.get(tenor)
+
+        if d is not None and pd.notna(rate):
+            points.append((float(d), float(rate)))
+
+    if not points:
+        return np.nan
+
+    points = sorted(points, key=lambda x: x[0])
+
+    x_days = np.array([p[0] for p in points], dtype=float)
+    y_rates = np.array([p[1] for p in points], dtype=float)
+
+    return float(np.interp(float(days), x_days, y_rates))
+
+
+def interpolate_sofr_rate(days):
+    global current_sofr_curve
+
+    if current_sofr_curve is None or len(current_sofr_curve) == 0:
+        return np.nan
+
+    return interpolate_curve_by_days(current_sofr_curve, days)
+
+
+def interpolate_funding_cost_rate(days):
+    """
+    Used only for cash & carry economics.
+    """
+    sofr = interpolate_sofr_rate(days)
+
+    if pd.isna(sofr):
+        return np.nan
+
+    return sofr + get_sofr_spread()
+
+
+def interpolate_metal_forward_rate(metal, days):
+    curves = get_current_forward_curves()
+    curve = curves.get(metal, {})
+
+    return interpolate_curve_by_days(curve, days)
+
+
+def otc_value_dollar(spot_mid, metal_fwd_pct, days):
+    """
+    OTC value in $/oz based on desk metal forward curve.
+
+    OTC = Spot × Metal Forward % × Days / 360
+    """
+    if pd.isna(spot_mid) or pd.isna(metal_fwd_pct) or pd.isna(days) or days == '—':
+        return np.nan
+
+    return spot_mid * (metal_fwd_pct / 100.0) * (float(days) / 360.0)
+
+
+def carry_cost_dollar(spot_mid, funding_cost_pct, insurance_pct, days):
+    """
+    Carry cost in $/oz.
+
+    Carry Cost = Spot × (Funding Cost + Insurance) × Days / 360.
+    Funding Cost = SOFR + SOFR Spread.
+    Used only for cash & carry.
+    """
+    if pd.isna(spot_mid) or pd.isna(funding_cost_pct) or pd.isna(days) or days == '—':
+        return np.nan
+
+    total_carry_pct = funding_cost_pct + insurance_pct
+
+    return spot_mid * (total_carry_pct / 100.0) * (float(days) / 360.0)
+
+
+def classify_rich_cheap(z):
+    if pd.isna(z):
+        return 'No history'
+    if z >= 2.0:
+        return 'Very Rich'
+    if z >= 1.0:
+        return 'Rich'
+    if z <= -2.0:
+        return 'Very Cheap'
+    if z <= -1.0:
+        return 'Cheap'
+    return 'Fair'
+
+
+def signal_color(signal):
+    if signal in ['Very Rich', 'Rich']:
+        return C_RED
+    if signal in ['Very Cheap', 'Cheap']:
+        return C_GREEN
+    if signal == 'Fair':
+        return C_MUTED
+    return C_MUTED
+
+
+def _cell_color_num(v):
+    if not isinstance(v, (float, int, np.float64, np.int64)) or pd.isna(v):
+        return ''
+    return f'color:{C_GREEN}' if v > 0 else f'color:{C_RED}'
+
+
+def _cell_color_rv(v):
+    """
+    Positive RV = EFP rich / opportunity to sell EFP.
+    Negative RV = EFP cheap / opportunity to buy EFP.
+    """
+    if not isinstance(v, (float, int, np.float64, np.int64)) or pd.isna(v):
+        return ''
+    return f'color:{C_RED}' if v > 0 else f'color:{C_GREEN}'
+
+
+def _cell_color_z(v):
+    if not isinstance(v, (float, int, np.float64, np.int64)) or pd.isna(v):
+        return ''
+    if v >= 1:
+        return f'color:{C_RED}'
+    if v <= -1:
+        return f'color:{C_GREEN}'
+    return f'color:{C_MUTED}'
+
+
+print("✅ SOFR / funding cost / metal forward / RV helper functions loaded")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 6 — Historical Store Functions
+# ─────────────────────────────────────────────────────────────
+
+def load_efp_history():
+    try:
+        hist = pd.read_csv(HISTORY_FILE)
+
+        if 'Timestamp' in hist.columns:
+            hist['Timestamp'] = pd.to_datetime(hist['Timestamp'])
+
+        return hist
+
+    except Exception:
+        return pd.DataFrame()
+
+
+def save_efp_history(new_rows):
+    new_df = pd.DataFrame(new_rows)
+
+    if new_df.empty:
+        return
+
+    old_df = load_efp_history()
+    hist = pd.concat([old_df, new_df], ignore_index=True)
+
+    dedupe_cols = ['Timestamp', 'Metal', 'Contract', 'Month/Year']
+    existing_cols = [c for c in dedupe_cols if c in hist.columns]
+
+    if existing_cols:
+        hist = hist.drop_duplicates(subset=existing_cols, keep='last')
+
+    hist.to_csv(HISTORY_FILE, index=False)
+
+
+def get_history_stats(hist, metal, contract, current_value, value_col='EFP RV ($/oz)'):
+    output = {
+        'Hist Obs': np.nan,
+        '1D Δ ($)': np.nan,
+        '5D Δ ($)': np.nan,
+        '20D Δ ($)': np.nan,
+        'Hist Mean ($)': np.nan,
+        'Hist Std ($)': np.nan,
+        'Z-Score': np.nan,
+        'Percentile': np.nan,
+        'Signal': 'No history',
+    }
+
+    if hist is None or hist.empty:
+        return output
+
+    required_cols = ['Timestamp', 'Metal', 'Contract', value_col]
+
+    if not all(c in hist.columns for c in required_cols):
+        return output
+
+    h = hist[
+        (hist['Metal'] == metal) &
+        (hist['Contract'] == contract)
+    ].copy()
+
+    if h.empty or pd.isna(current_value):
+        return output
+
+    h['Timestamp'] = pd.to_datetime(h['Timestamp'])
+    h['Date'] = h['Timestamp'].dt.date
+    h = h.sort_values('Timestamp')
+
+    h_daily = h.groupby('Date', as_index=False).tail(1)
+    series = pd.to_numeric(h_daily[value_col], errors='coerce').dropna()
+
+    if series.empty:
+        return output
+
+    output['Hist Obs'] = int(len(series))
+
+    if len(series) >= 1:
+        output['1D Δ ($)'] = current_value - series.iloc[-1]
+    if len(series) >= 5:
+        output['5D Δ ($)'] = current_value - series.iloc[-5]
+    if len(series) >= 20:
+        output['20D Δ ($)'] = current_value - series.iloc[-20]
+
+    hist_window = series.tail(252)
+
+    mean = hist_window.mean()
+    std = hist_window.std(ddof=1)
+
+    output['Hist Mean ($)'] = mean
+    output['Hist Std ($)'] = std
+
+    if pd.notna(std) and std != 0:
+        z = (current_value - mean) / std
+        output['Z-Score'] = z
+        output['Signal'] = classify_rich_cheap(z)
+
+    output['Percentile'] = (hist_window <= current_value).mean() * 100
+
+    return output
+
+
+print("✅ Historical store functions loaded")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 7 — Opportunity Table Functions
+# ─────────────────────────────────────────────────────────────
+
+def build_efp_rv_opportunity_table(efp_data):
+    """
+    EFP RV is pure paper RV:
+        EFP RV = EFP Mid - OTC
+
+    No SOFR, no funding spread, no insurance and no lease are included here.
+    """
+    rows = []
+
+    for metal in METALS:
+        df = efp_data[metal].copy()
+
+        for contract, row in df.iterrows():
+            rows.append({
+                'Metal': metal,
+                'Name': METAL_NAMES.get(metal, metal),
+                'Contract': contract,
+                'Month/Year': row.get('Month/Year'),
+                'Days': row.get('Days'),
+
+                'EFP Mid ($/oz)': row.get('EFP Mid'),
+                'OTC ($/oz)': row.get('OTC ($/oz)'),
+                'EFP RV ($/oz)': row.get('EFP RV ($/oz)'),
+
+                'Ann Mid (%)': row.get('Ann Mid (%)'),
+                'Metal Fwd (%)': row.get('Metal Fwd (%)'),
+
+                'Z-Score': row.get('Z-Score'),
+                'Percentile': row.get('Percentile'),
+                'Signal': row.get('Signal'),
+            })
+
+    out = pd.DataFrame(rows)
+
+    if out.empty:
+        return out
+
+    out['SortScore'] = pd.to_numeric(out['EFP RV ($/oz)'], errors='coerce')
+    out = out.sort_values('SortScore', ascending=False)
+    out = out.drop(columns=['SortScore'])
+
+    return out.reset_index(drop=True)
+
+
+def build_cash_carry_table(efp_data):
+    rows = []
+
+    for metal in METALS:
+        df = efp_data[metal].copy()
+
+        if 'C1' not in df.index:
+            continue
+
+        front = df.loc['C1']
+
+        front_efp = front.get('EFP Mid')
+        front_days = front.get('Days')
+        spot_mid = front.get('Spot Mid')
+
+        trigger = (
+            pd.notna(front_efp) and
+            isinstance(front_efp, (float, int, np.float64, np.int64)) and
+            front_efp < 0
+        )
+
+        capital_used = (
+            spot_mid + front_efp
+            if pd.notna(spot_mid) and pd.notna(front_efp)
+            else np.nan
+        )
+
+        for contract in ['C2', 'C3', 'C4']:
+            if contract not in df.index:
+                continue
+
+            far = df.loc[contract]
+
+            far_efp = far.get('EFP Mid')
+            far_days = far.get('Days')
+
+            gross_spread = np.nan
+            hold_days = np.nan
+            hold_sofr = np.nan
+            hold_funding_cost = np.nan
+            carry_cost = np.nan
+            net_carry = np.nan
+            carry_per_day = np.nan
+            roc_pct = np.nan
+            roc_ann_pct = np.nan
+
+            if pd.notna(front_efp) and pd.notna(far_efp) and pd.notna(front_days) and pd.notna(far_days):
+                hold_days = far_days - front_days
+                gross_spread = far_efp - front_efp
+
+                if hold_days > 0:
+                    hold_sofr = interpolate_sofr_rate(hold_days)
+                    hold_funding_cost = interpolate_funding_cost_rate(hold_days)
+
+                    carry_cost = carry_cost_dollar(
+                        spot_mid=spot_mid,
+                        funding_cost_pct=hold_funding_cost,
+                        insurance_pct=INSURANCE_RATE_PCT,
+                        days=hold_days
+                    )
+
+                    net_carry = (
+                        gross_spread - carry_cost
+                        if pd.notna(gross_spread) and pd.notna(carry_cost)
+                        else np.nan
+                    )
+
+                    carry_per_day = (
+                        net_carry / hold_days
+                        if pd.notna(net_carry) and pd.notna(hold_days) and hold_days > 0
+                        else np.nan
+                    )
+
+                    roc_pct = (
+                        net_carry / capital_used * 100
+                        if pd.notna(net_carry) and pd.notna(capital_used) and capital_used > 0
+                        else np.nan
+                    )
+
+                    roc_ann_pct = (
+                        roc_pct * 360 / hold_days
+                        if pd.notna(roc_pct) and pd.notna(hold_days) and hold_days > 0
+                        else np.nan
+                    )
+
+            rows.append({
+                'Metal': metal,
+                'Name': METAL_NAMES.get(metal, metal),
+
+                'Front Month': front.get('Month/Year'),
+                'Deferred Month': far.get('Month/Year'),
+
+                'Front EFP ($/oz)': front_efp,
+                'Deferred EFP ($/oz)': far_efp,
+
+                'Hold Days': hold_days,
+                'Hold SOFR (%)': hold_sofr,
+                'SOFR Spread (%)': get_sofr_spread(),
+                'Hold Funding Cost (%)': hold_funding_cost,
+                'Insurance (%)': INSURANCE_RATE_PCT,
+
+                'Gross Carry Spread ($/oz)': gross_spread,
+                'Carry Cost ($/oz)': carry_cost,
+                'Net Cash Carry ($/oz)': net_carry,
+                'Carry Per Day ($/oz/day)': carry_per_day,
+
+                'Capital Used ($/oz)': capital_used,
+                'ROC (%)': roc_pct,
+                'Annualised ROC (%)': roc_ann_pct,
+
+                'Delivery Trigger': 'Yes' if trigger else 'No',
+                'Signal': (
+                    'Attractive' if pd.notna(net_carry) and net_carry > 0 and trigger else
+                    'Positive but no trigger' if pd.notna(net_carry) and net_carry > 0 and not trigger else
+                    'Not attractive'
+                ),
+            })
+
+    out = pd.DataFrame(rows)
+
+    if out.empty:
+        return out
+
+    out['SortScore'] = pd.to_numeric(out['Annualised ROC (%)'], errors='coerce')
+    out = out.sort_values('SortScore', ascending=False)
+    out = out.drop(columns=['SortScore'])
+
+    return out.reset_index(drop=True)
+
+
+print("✅ Opportunity table functions loaded")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 8 — Main Fetch / Calculate / Display Function
+# ─────────────────────────────────────────────────────────────
+
+def fetch_all_data():
+    global spot_ba, fut_ba, fnd_map, spot_date
+    global efp_data, switch_data, fut_month_yr
+    global efp_history, efp_rv_opportunity_df, cash_carry_df
+    global current_sofr_curve
+
+    # Critical: save widget state before clearing/redrawing output.
+    save_forward_curves(verbose=False)
+
+    clear_output(wait=True)
+
+    display_forward_inputs()
+
+    display(widgets.VBox([
+        widgets.HBox([
+            save_button,
+            refresh_button
+        ]),
+        status_label,
+        tables_html
+    ]))
+
+    all_spot_tickers = list(SPOT_TICKERS.values())
+    all_fut_tickers = [tkr for m in METALS for tkr in FUTURES_CHAIN[m].values()]
+
+    print("Fetching spot bid/ask...")
+    spot_ba = fetch_bid_ask(all_spot_tickers)
+
+    print("Fetching futures bid/ask...")
+    fut_ba = fetch_bid_ask(all_fut_tickers)
+
+    print("Fetching first notice dates...")
+    fnd_map = fetch_fnd(all_fut_tickers)
+
+    print("Fetching futures month/year...")
+    fut_month_yr = fetch_fut_month_yr(all_fut_tickers)
+
+    print("Fetching SOFR OIS curve...")
+    current_sofr_curve = fetch_sofr_curve()
+
+    if current_sofr_curve is None or len(current_sofr_curve) == 0:
+        print("⚠ SOFR curve fetch failed. Using fallback flat SOFR curve.")
+        current_sofr_curve = fallback_sofr_curve()
+    else:
+        print("✓ SOFR curve fetched successfully")
+
+    spot_date = pd.bdate_range(start=TODAY, periods=3)[-1].date()
+
+    print(f"\nSpot date (T+2 biz): {spot_date}")
+
+    sofr_rows = []
+
+    for tenor, ticker in SOFR_CURVE_TICKERS.items():
+        rate = current_sofr_curve.get(tenor, np.nan)
+        days = TENOR_DAYS.get(tenor, np.nan)
+
+        sofr_rows.append({
+            'Tenor': tenor,
+            'Days': days,
+            'Ticker': ticker,
+            'SOFR (%)': rate,
+            'SOFR Spread (%)': get_sofr_spread(),
+            'Funding Cost (%)': rate + get_sofr_spread() if pd.notna(rate) else np.nan,
+        })
+
+    sofr_df = pd.DataFrame(sofr_rows)
+
+    print("\nSOFR / Funding Cost Curve")
+    print("Note: Funding Cost is used only for Cash & Carry, not EFP RV.")
+    display(
+        sofr_df.style
+        .format({
+            'SOFR (%)': '{:+.4f}%',
+            'SOFR Spread (%)': '{:+.4f}%',
+            'Funding Cost (%)': '{:+.4f}%',
+            'Days': '{:.0f}',
+        }, na_rep='—')
+        .set_table_styles([
+            {'selector': 'th', 'props': [('background-color', BG_CARD), ('color', C_TEXT)]},
+        ])
+    )
+
+    print(f"\n{'Metal':<6}  {'Spot Bid':>10}  {'Spot Ask':>10}  {'Spot Mid':>10}")
+    print(f"{'─' * 6}  {'─' * 10}  {'─' * 10}  {'─' * 10}")
+
+    for metal, tkr in SPOT_TICKERS.items():
+        ba = spot_ba[tkr]
+
+        bid_str = f"{ba['bid']:>10.4f}" if not np.isnan(ba['bid']) else f"{'N/A':>10}"
+        ask_str = f"{ba['ask']:>10.4f}" if not np.isnan(ba['ask']) else f"{'N/A':>10}"
+        mid_str = f"{ba['mid']:>10.4f}" if not np.isnan(ba['mid']) else f"{'N/A':>10}"
+
+        print(f"{metal:<6}  {bid_str}  {ask_str}  {mid_str}")
+
+    # ── Calculate EFP Data ────────────────────────────────────
+
+    efp_data = {}
+
+    for metal in METALS:
+        spot_tkr = SPOT_TICKERS[metal]
+        sba = spot_ba[spot_tkr]
+
+        spot_bid = sba['bid']
+        spot_ask = sba['ask']
+        spot_mid = sba['mid']
+
+        rows = []
+
+        for contract, fut_tkr in FUTURES_CHAIN[metal].items():
+            fba = fut_ba[fut_tkr]
+            fnd = fnd_map.get(fut_tkr)
+            days = days_to_value(fnd, spot_date)
+            month_yr = fut_month_yr.get(fut_tkr, contract)
+
+            fut_bid = fba['bid']
+            fut_ask = fba['ask']
+            fut_mid = fba['mid']
+
+            efp_bid = (
+                fut_bid - spot_ask
+                if not (np.isnan(fut_bid) or np.isnan(spot_ask))
+                else np.nan
+            )
+
+            efp_ask = (
+                fut_ask - spot_bid
+                if not (np.isnan(fut_ask) or np.isnan(spot_bid))
+                else np.nan
+            )
+
+            efp_mid = (
+                (efp_bid + efp_ask) / 2
+                if not (np.isnan(efp_bid) or np.isnan(efp_ask))
+                else np.nan
+            )
+
+            spread = (
+                efp_ask - efp_bid
+                if not (np.isnan(efp_ask) or np.isnan(efp_bid))
+                else np.nan
+            )
+
+            def ann(efp_val):
+                if days and not (np.isnan(efp_val) or np.isnan(spot_mid)) and spot_mid != 0:
+                    return efp_val / spot_mid * (360 / days) * 100
+                return np.nan
+
+            ann_bid = ann(efp_bid)
+            ann_ask = ann(efp_ask)
+            ann_mid = ann(efp_mid)
+
+            metal_fwd = interpolate_metal_forward_rate(metal, days)
+
+            otc_value = otc_value_dollar(
+                spot_mid=spot_mid,
+                metal_fwd_pct=metal_fwd,
+                days=days
+            )
+
+            efp_rv_dollar = (
+                efp_mid - otc_value
+                if pd.notna(efp_mid) and pd.notna(otc_value)
+                else np.nan
+            )
+
+            sofr_rate = interpolate_sofr_rate(days)
+            funding_cost = interpolate_funding_cost_rate(days)
+
+            carry_cost_full_period = carry_cost_dollar(
+                spot_mid=spot_mid,
+                funding_cost_pct=funding_cost,
+                insurance_pct=INSURANCE_RATE_PCT,
+                days=days
+            )
+
+            rows.append({
+                'Contract': contract,
+                'Month/Year': month_yr,
+                'Fut Tkr': fut_tkr,
+                'FND': str(fnd) if fnd else '—',
+                'Days': days or '—',
+
+                'Fut Bid': fut_bid,
+                'Fut Ask': fut_ask,
+                'Fut Mid': fut_mid,
+
+                'Spot Bid': spot_bid,
+                'Spot Ask': spot_ask,
+                'Spot Mid': spot_mid,
+
+                'EFP Bid': efp_bid,
+                'EFP Ask': efp_ask,
+                'EFP Mid': efp_mid,
+                'EFP Spread': spread,
+
+                'Ann Bid (%)': ann_bid,
+                'Ann Ask (%)': ann_ask,
+                'Ann Mid (%)': ann_mid,
+
+                'Metal Fwd (%)': metal_fwd,
+
+                # Funding fields retained for Cash & Carry only.
+                'SOFR (%)': sofr_rate,
+                'SOFR Spread (%)': get_sofr_spread(),
+                'Funding Cost (%)': funding_cost,
+                'Carry Cost Full Period ($/oz)': carry_cost_full_period,
+
+                'OTC ($/oz)': otc_value,
+                'EFP RV ($/oz)': efp_rv_dollar,
+            })
+
+        efp_data[metal] = pd.DataFrame(rows).set_index('Contract')
+
+    # ── Historical Analytics on EFP RV $ ──────────────────────
+
+    efp_history = load_efp_history()
+    history_rows = []
+
+    refresh_ts = datetime.now().replace(second=0, microsecond=0)
+
+    for metal in METALS:
+        df = efp_data[metal].copy()
+
+        for contract in df.index:
+            rv_now = df.loc[contract, 'EFP RV ($/oz)']
+
+            stats = get_history_stats(
+                efp_history,
+                metal,
+                contract,
+                rv_now,
+                value_col='EFP RV ($/oz)'
+            )
+
+            for k, v in stats.items():
+                df.loc[contract, k] = v
+
+            history_rows.append({
+                'Timestamp': refresh_ts,
+                'Date': refresh_ts.date(),
+                'Metal': metal,
+                'Metal Name': METAL_NAMES.get(metal, metal),
+                'Contract': contract,
+                'Month/Year': df.loc[contract, 'Month/Year'],
+                'Fut Tkr': df.loc[contract, 'Fut Tkr'],
+                'FND': df.loc[contract, 'FND'],
+                'Days': df.loc[contract, 'Days'],
+
+                'Spot Mid': df.loc[contract, 'Spot Mid'],
+                'Fut Mid': df.loc[contract, 'Fut Mid'],
+                'EFP Mid': df.loc[contract, 'EFP Mid'],
+                'Ann Mid (%)': df.loc[contract, 'Ann Mid (%)'],
+
+                'Metal Fwd (%)': df.loc[contract, 'Metal Fwd (%)'],
+                'OTC ($/oz)': df.loc[contract, 'OTC ($/oz)'],
+                'EFP RV ($/oz)': df.loc[contract, 'EFP RV ($/oz)'],
+
+                # Stored for cash/carry diagnostics only.
+                'SOFR (%)': df.loc[contract, 'SOFR (%)'],
+                'SOFR Spread (%)': df.loc[contract, 'SOFR Spread (%)'],
+                'Funding Cost (%)': df.loc[contract, 'Funding Cost (%)'],
+                'Carry Cost Full Period ($/oz)': df.loc[contract, 'Carry Cost Full Period ($/oz)'],
+            })
+
+        efp_data[metal] = df
+
+    save_efp_history(history_rows)
+
+    efp_rv_opportunity_df = build_efp_rv_opportunity_table(efp_data)
+    cash_carry_df = build_cash_carry_table(efp_data)
+
+    # ─────────────────────────────────────────────────────────
+    #  Display EFP RV Tables
+    # ─────────────────────────────────────────────────────────
+
+    BAR = '═' * 120
+
+    for metal in METALS:
+        df = efp_data[metal]
+        color = METAL_COLORS[metal]
+        name = METAL_NAMES[metal]
+        spot_mid = spot_ba[SPOT_TICKERS[metal]]['mid']
+
+        print(f"\n{BAR}")
+        print(f"  {name} ({metal}) | Spot Mid: ${spot_mid:,.4f}")
+        print("  EFP RV is pure paper RV: EFP Mid - OTC")
+        print("  OTC $ = Spot × Metal Forward × Days / 360")
+        print("  SOFR / funding spread are not used in this RV signal")
+        print(BAR)
+
+        display_cols = [
+            'Month/Year',
+            'FND',
+            'Days',
+
+            'EFP Bid',
+            'EFP Ask',
+            'EFP Mid',
+
+            'OTC ($/oz)',
+            'EFP RV ($/oz)',
+
+            'Ann Mid (%)',
+            'Metal Fwd (%)',
+
+            '1D Δ ($)',
+            '5D Δ ($)',
+            '20D Δ ($)',
+            'Z-Score',
+            'Percentile',
+            'Signal',
+        ]
+
+        styler = (
+            df[display_cols].style
+            .format({
+                'EFP Bid': '{:+.2f}',
+                'EFP Ask': '{:+.2f}',
+                'EFP Mid': '{:+.2f}',
+
+                'OTC ($/oz)': '{:+.2f}',
+                'EFP RV ($/oz)': '{:+.2f}',
+
+                'Ann Mid (%)': '{:+.2f}%',
+                'Metal Fwd (%)': '{:+.2f}%',
+
+                '1D Δ ($)': '{:+.2f}',
+                '5D Δ ($)': '{:+.2f}',
+                '20D Δ ($)': '{:+.2f}',
+
+                'Z-Score': '{:+.2f}',
+                'Percentile': '{:.0f}%',
+            }, na_rep='—')
+            .applymap(_cell_color_num, subset=[
+                'EFP Bid',
+                'EFP Ask',
+                'EFP Mid',
+            ])
+            .applymap(_cell_color_rv, subset=[
+                'EFP RV ($/oz)',
+                '1D Δ ($)',
+                '5D Δ ($)',
+                '20D Δ ($)',
+            ])
+            .applymap(_cell_color_z, subset=['Z-Score'])
+            .set_caption(
+                f'{name} EFP RV Monitor | Positive RV = EFP rich versus OTC'
+            )
+            .set_table_styles([
+                {'selector': 'caption', 'props': [('color', C_TEXT), ('font-weight', 'bold'), ('font-size', '11px')]},
+                {'selector': 'th', 'props': [('background-color', BG_CARD), ('color', C_TEXT)]},
+            ])
+        )
+
+        display(styler)
+
+    # ── Top EFP RV Opportunities ──────────────────────────────
+
+    if efp_rv_opportunity_df is not None and not efp_rv_opportunity_df.empty:
+        print(f"\n{BAR}")
+        print("  TOP EFP RV OPPORTUNITIES")
+        print(BAR)
+        print("  Ranked by: EFP RV ($/oz) = EFP Mid - OTC")
+        print("  No SOFR / funding spread / insurance included in this RV screen")
+        print(BAR)
+
+        opp_cols = [
+            'Metal',
+            'Month/Year',
+            'Days',
+            'EFP Mid ($/oz)',
+            'OTC ($/oz)',
+            'EFP RV ($/oz)',
+            'Ann Mid (%)',
+            'Metal Fwd (%)',
+            'Z-Score',
+            'Percentile',
+            'Signal',
+        ]
+
+        display(
+            efp_rv_opportunity_df[opp_cols].head(16).style
+            .format({
+                'EFP Mid ($/oz)': '{:+.2f}',
+                'OTC ($/oz)': '{:+.2f}',
+                'EFP RV ($/oz)': '{:+.2f}',
+                'Ann Mid (%)': '{:+.2f}%',
+                'Metal Fwd (%)': '{:+.2f}%',
+                'Z-Score': '{:+.2f}',
+                'Percentile': '{:.0f}%',
+            }, na_rep='—')
+            .applymap(_cell_color_rv, subset=['EFP RV ($/oz)'])
+            .applymap(_cell_color_z, subset=['Z-Score'])
+            .set_caption(
+                'Top EFP RV Opportunities | Positive RV means EFP is rich versus OTC'
+            )
+            .set_table_styles([
+                {'selector': 'caption', 'props': [('color', C_TEXT), ('font-weight', 'bold'), ('font-size', '11px')]},
+                {'selector': 'th', 'props': [('background-color', BG_CARD), ('color', C_TEXT)]},
+            ])
+        )
+
+    # ── Cash & Carry Monitor ──────────────────────────────────
+
+    if cash_carry_df is not None and not cash_carry_df.empty:
+        print(f"\n{BAR}")
+        print("  CASH & CARRY MONITOR")
+        print(BAR)
+        print("  Logic: if front EFP is negative, consider taking delivery, holding warrant and selling deferred future")
+        print(f"  Insurance assumption: {INSURANCE_RATE_PCT:.3f}% p.a. = 0.7bp")
+        print("  Carry Cost uses Funding Cost = SOFR + SOFR Spread")
+        print("  Capital Used = Spot Mid + Front EFP")
+        print("  ROC = Net Cash Carry / Capital Used")
+        print("  Annualised ROC = ROC × 360 / Hold Days")
+        print(BAR)
+
+        cc_cols = [
+            'Metal',
+            'Front Month',
+            'Deferred Month',
+            'Front EFP ($/oz)',
+            'Deferred EFP ($/oz)',
+            'Hold Days',
+            'Hold SOFR (%)',
+            'SOFR Spread (%)',
+            'Hold Funding Cost (%)',
+            'Insurance (%)',
+            'Gross Carry Spread ($/oz)',
+            'Carry Cost ($/oz)',
+            'Net Cash Carry ($/oz)',
+            'Carry Per Day ($/oz/day)',
+            'Capital Used ($/oz)',
+            'ROC (%)',
+            'Annualised ROC (%)',
+            'Delivery Trigger',
+            'Signal',
+        ]
+
+        display(
+            cash_carry_df[cc_cols].style
+            .format({
+                'Front EFP ($/oz)': '{:+.2f}',
+                'Deferred EFP ($/oz)': '{:+.2f}',
+                'Hold SOFR (%)': '{:+.2f}%',
+                'SOFR Spread (%)': '{:+.2f}%',
+                'Hold Funding Cost (%)': '{:+.2f}%',
+                'Insurance (%)': '{:+.3f}%',
+                'Gross Carry Spread ($/oz)': '{:+.2f}',
+                'Carry Cost ($/oz)': '{:+.2f}',
+                'Net Cash Carry ($/oz)': '{:+.2f}',
+                'Carry Per Day ($/oz/day)': '{:+.4f}',
+                'Capital Used ($/oz)': '{:,.2f}',
+                'ROC (%)': '{:+.4f}%',
+                'Annualised ROC (%)': '{:+.2f}%',
+            }, na_rep='—')
+            .applymap(_cell_color_rv, subset=[
+                'Front EFP ($/oz)',
+                'Deferred EFP ($/oz)',
+                'Gross Carry Spread ($/oz)',
+                'Net Cash Carry ($/oz)',
+                'Carry Per Day ($/oz/day)',
+                'ROC (%)',
+                'Annualised ROC (%)',
+            ])
+            .set_caption(
+                'Cash & Carry Monitor | Net = Deferred EFP - Front EFP - Carry Cost'
+            )
+            .set_table_styles([
+                {'selector': 'caption', 'props': [('color', C_TEXT), ('font-weight', 'bold'), ('font-size', '11px')]},
+                {'selector': 'th', 'props': [('background-color', BG_CARD), ('color', C_TEXT)]},
+            ])
+        )
+
+    # ─────────────────────────────────────────────────────────
+    #  Switch Data
+    # ─────────────────────────────────────────────────────────
+
+    switch_data = {}
+    SWITCH_PAIRS = [('C1', 'C2'), ('C2', 'C3'), ('C3', 'C4')]
+
+    for metal in METALS:
+        spot_mid = spot_ba[SPOT_TICKERS[metal]]['mid']
+        df = efp_data[metal]
+
+        rows = []
+
+        for cn, cn1 in SWITCH_PAIRS:
+            r_near = df.loc[cn]
+            r_far = df.loc[cn1]
+
+            month_yr_near = r_near['Month/Year']
+            month_yr_far = r_far['Month/Year']
+
+            sw_bid = r_far['EFP Bid'] - r_near['EFP Ask']
+            sw_ask = r_far['EFP Ask'] - r_near['EFP Bid']
+
+            sw_mid = (
+                (sw_bid + sw_ask) / 2
+                if not (np.isnan(sw_bid) or np.isnan(sw_ask))
+                else np.nan
+            )
+
+            sw_spd = (
+                sw_ask - sw_bid
+                if not (np.isnan(sw_ask) or np.isnan(sw_bid))
+                else np.nan
+            )
+
+            days_near = r_near['Days'] if pd.notna(r_near['Days']) else None
+            days_far = r_far['Days'] if pd.notna(r_far['Days']) else None
+
+            inc_days = (
+                days_far - days_near
+                if (days_near and days_far and days_far > days_near)
+                else None
+            )
+
+            def ann_sw(val):
+                if inc_days and inc_days > 0 and not np.isnan(val) and spot_mid and spot_mid != 0:
+                    return val / spot_mid * (360 / inc_days) * 100
+                return np.nan
+
+            rows.append({
+                'Switch': f'{month_yr_near}→{month_yr_far}',
+                'Near Contract': cn,
+                'Far Contract': cn1,
+                'Near FND': r_near['FND'],
+                'Far FND': r_far['FND'],
+                'Inc. Days': inc_days or '—',
+
+                'Switch Bid': sw_bid,
+                'Switch Ask': sw_ask,
+                'Switch Mid': sw_mid,
+                'Switch Spread': sw_spd,
+
+                'Ann Bid (%)': ann_sw(sw_bid),
+                'Ann Ask (%)': ann_sw(sw_ask),
+                'Ann Mid (%)': ann_sw(sw_mid),
+            })
+
+        switch_data[metal] = pd.DataFrame(rows).set_index('Switch')
+
+    for metal in METALS:
+        df = switch_data[metal]
+        color = METAL_COLORS[metal]
+        name = METAL_NAMES[metal]
+        spot_mid = spot_ba[SPOT_TICKERS[metal]]['mid']
+
+        print(f"\n{BAR}")
+        print(f"  {name} ({metal}) Switch Levels | Spot Mid: ${spot_mid:,.4f}")
+        print(BAR)
+
+        display_cols = [
+            'Inc. Days',
+            'Switch Bid',
+            'Switch Ask',
+            'Switch Mid',
+            'Switch Spread',
+            'Ann Bid (%)',
+            'Ann Ask (%)',
+            'Ann Mid (%)',
+        ]
+
+        styler = (
+            df[display_cols].style
+            .format({
+                'Switch Bid': '{:+.2f}',
+                'Switch Ask': '{:+.2f}',
+                'Switch Mid': '{:+.2f}',
+                'Switch Spread': '{:.2f}',
+                'Ann Bid (%)': '{:+.2f}%',
+                'Ann Ask (%)': '{:+.2f}%',
+                'Ann Mid (%)': '{:+.2f}%',
+            }, na_rep='—')
+            .applymap(_cell_color_num, subset=[
+                'Switch Bid',
+                'Switch Ask',
+                'Switch Mid',
+                'Ann Bid (%)',
+                'Ann Ask (%)',
+                'Ann Mid (%)',
+            ])
+            .set_caption(
+                f'{name} Switch Levels | Bid = EFP Bid(far) - EFP Ask(near)'
+            )
+            .set_table_styles([
+                {'selector': 'caption', 'props': [('color', C_TEXT), ('font-weight', 'bold'), ('font-size', '11px')]},
+                {'selector': 'th', 'props': [('background-color', BG_CARD), ('color', C_TEXT)]},
+            ])
+        )
+
+        display(styler)
+
+    # ─────────────────────────────────────────────────────────
+    #  Charts
+    # ─────────────────────────────────────────────────────────
+
+    sofr_chart = sofr_df.dropna(subset=['SOFR (%)']).copy()
+
+    if not sofr_chart.empty:
+        fig, ax = plt.subplots(figsize=(14, 4), facecolor=BG_DARK)
+
+        ax.plot(
+            sofr_chart['Days'],
+            sofr_chart['SOFR (%)'],
+            color=C_BLUE,
+            marker='o',
+            lw=2,
+            label='SOFR OIS Curve'
+        )
+
+        ax.plot(
+            sofr_chart['Days'],
+            sofr_chart['Funding Cost (%)'],
+            color=C_AMBER,
+            marker='x',
+            lw=2,
+            label='Funding Cost = SOFR + Spread'
+        )
+
+        for _, row in sofr_chart.iterrows():
+            ax.annotate(
+                row['Tenor'],
+                (row['Days'], row['SOFR (%)']),
+                textcoords="offset points",
+                xytext=(0, 6),
+                ha='center',
+                fontsize=8,
+                color=C_MUTED
+            )
+
+        ax.set_title('SOFR vs Funding Cost Curve | Cash & Carry Input Only', color=C_TEXT, fontweight='bold')
+        ax.set_xlabel('Days', color=C_MUTED)
+        ax.set_ylabel('%', color=C_MUTED)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:+.2f}%'))
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+
+        plt.tight_layout()
+        plt.show()
+
+    # EFP RV Dollar Chart
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), facecolor=BG_DARK)
+    fig.suptitle(
+        'EFP RV Monitor — EFP vs OTC Value ($/oz)',
+        color=C_TEXT,
+        fontsize=13,
+        fontweight='bold'
+    )
+
+    axes = axes.flatten()
+
+    for idx, metal in enumerate(METALS):
+        ax = axes[idx]
+        df = efp_data[metal]
+        color = METAL_COLORS[metal]
+        name = METAL_NAMES[metal]
+
+        contracts = df['Month/Year'].tolist()
+        x_pos = np.arange(len(contracts))
+
+        actual = df['EFP Mid'].tolist()
+        otc = df['OTC ($/oz)'].tolist()
+        rv = df['EFP RV ($/oz)'].tolist()
+
+        ax.plot(x_pos, actual, color=color, marker='o', lw=2, label='EFP Mid')
+        ax.plot(x_pos, otc, color=C_MUTED, marker='x', lw=1.5, label='OTC Value')
+        ax.bar(x_pos, rv, color=color, alpha=0.25, label='RV = EFP - OTC')
+
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(contracts)
+        ax.axhline(0, color=C_MUTED, lw=0.8, ls=':')
+        ax.set_title(f'{name} ({metal})', color=color, fontweight='bold')
+        ax.set_ylabel('$/oz', color=C_MUTED)
+        ax.legend(fontsize=8, loc='best')
+        ax.grid(True, alpha=0.3, axis='y')
+
+    plt.tight_layout()
+    plt.show()
+
+    # Cash & Carry Chart
+
+    if cash_carry_df is not None and not cash_carry_df.empty:
+        plot_df = cash_carry_df.copy()
+        plot_df['Label'] = (
+            plot_df['Metal']
+            + ' '
+            + plot_df['Front Month']
+            + ' → '
+            + plot_df['Deferred Month']
+        )
+
+        fig, ax = plt.subplots(figsize=(14, 5), facecolor=BG_DARK)
+
+        x_pos = np.arange(len(plot_df))
+        vals = plot_df['Net Cash Carry ($/oz)'].tolist()
+
+        colors = [
+            C_GREEN if pd.notna(v) and v > 0 else C_RED
+            for v in vals
+        ]
+
+        ax.bar(x_pos, vals, color=colors, alpha=0.8)
+        ax.axhline(0, color=C_MUTED, lw=0.8, ls=':')
+
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(plot_df['Label'], rotation=45, ha='right')
+        ax.set_title('Cash & Carry Net Opportunity ($/oz)', color=C_TEXT, fontweight='bold')
+        ax.set_ylabel('$/oz', color=C_MUTED)
+        ax.grid(True, alpha=0.3, axis='y')
+
+        plt.tight_layout()
+        plt.show()
+
+    # Z-Score Chart on RV $
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), facecolor=BG_DARK)
+    fig.suptitle(
+        'EFP RV Rich / Cheap Monitor — Historical Z-Score on RV $',
+        color=C_TEXT,
+        fontsize=13,
+        fontweight='bold'
+    )
+
+    axes = axes.flatten()
+
+    for idx, metal in enumerate(METALS):
+        ax = axes[idx]
+        df = efp_data[metal]
+        color = METAL_COLORS[metal]
+        name = METAL_NAMES[metal]
+
+        contracts = df['Month/Year'].tolist()
+        x_pos = np.arange(len(contracts))
+        z_scores = pd.to_numeric(df['Z-Score'], errors='coerce').tolist()
+
+        bar_colors = []
+
+        for z in z_scores:
+            if pd.isna(z):
+                bar_colors.append(C_MUTED)
+            elif z >= 1:
+                bar_colors.append(C_RED)
+            elif z <= -1:
+                bar_colors.append(C_GREEN)
+            else:
+                bar_colors.append(C_MUTED)
+
+        ax.bar(x_pos, z_scores, color=bar_colors, alpha=0.8)
+
+        ax.axhline(2, color=C_RED, lw=0.8, ls='--')
+        ax.axhline(1, color=C_RED, lw=0.8, ls=':')
+        ax.axhline(0, color=C_MUTED, lw=0.8, ls='-')
+        ax.axhline(-1, color=C_GREEN, lw=0.8, ls=':')
+        ax.axhline(-2, color=C_GREEN, lw=0.8, ls='--')
+
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(contracts)
+        ax.set_title(f'{name} ({metal})', color=color, fontweight='bold')
+        ax.set_ylabel('Z-Score', color=C_MUTED)
+        ax.grid(True, alpha=0.3, axis='y')
+
+    plt.tight_layout()
+    plt.show()
+
+    # Switch Charts
+
+    switch_labels = [f'{a}→{b}' for a, b in SWITCH_PAIRS]
+    x = np.arange(len(SWITCH_PAIRS))
+    w = 0.18
+
+    offsets = np.linspace(
+        -(len(METALS) - 1) * w / 2,
+        (len(METALS) - 1) * w / 2,
+        len(METALS)
+    )
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5), facecolor=BG_DARK)
+    fig.suptitle(
+        'EFP Switch Levels — Bid/Ask Mid',
+        color=C_TEXT,
+        fontsize=12,
+        fontweight='bold'
+    )
+
+    for i, metal in enumerate(METALS):
+        df = switch_data[metal]
+        color = METAL_COLORS[metal]
+        name = METAL_NAMES[metal]
+
+        mids = df['Switch Mid'].tolist()
+        ann_bids = df['Ann Bid (%)'].tolist()
+        ann_asks = df['Ann Ask (%)'].tolist()
+        ann_mids = df['Ann Mid (%)'].tolist()
+
+        ax1.bar(x + offsets[i], mids, width=w, color=color, alpha=0.8, label=name)
+        ax2.fill_between(x + offsets[i], ann_bids, ann_asks, color=color, alpha=0.15)
+        ax2.plot(x + offsets[i], ann_mids, color=color, marker='o', ms=5, lw=0, label=name)
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(switch_labels)
+    ax1.axhline(0, color=C_MUTED, lw=0.8, ls=':')
+    ax1.set_title('Switch Mid ($/oz)', color=C_TEXT)
+    ax1.set_ylabel('$/oz', color=C_MUTED)
+    ax1.legend(fontsize=8)
+    ax1.grid(True, alpha=0.3, axis='y')
+
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(switch_labels)
+    ax2.axhline(0, color=C_MUTED, lw=0.8, ls=':')
+    ax2.set_title('Ann. Switch Mid (%) with Bid/Ask Band', color=C_TEXT)
+    ax2.set_ylabel('Ann. (%)', color=C_MUTED)
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:+.2f}%'))
+    ax2.legend(fontsize=8)
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    plt.tight_layout()
+    plt.show()
+
+    print(f"\n✅ Data refreshed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"✅ Historical store updated: {HISTORY_FILE}")
+
+
+print("✅ fetch_all_data() function loaded")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 9 — HTML Dashboard Generator
+# ─────────────────────────────────────────────────────────────
+
+def generate_all_tables_html():
+    html_parts = []
+
+    html_parts.append(f"""
+    <div style="font-family:'Segoe UI', Arial, sans-serif; background-color:{BG_DARK}; color:{C_TEXT}; padding:20px;">
+        <h2 style="color:{C_TEXT};">Precious Metals EFP RV Dashboard</h2>
+        <p style="color:{C_MUTED};">
+            Spot date: {spot_date} |
+            Day count: Spot Date to FND + 1 business day<br>
+            <b>EFP RV:</b> EFP RV $ = EFP Mid - OTC<br>
+            <b>OTC:</b> Spot × Metal Forward × Days / 360<br>
+            <b>Note:</b> SOFR, funding spread and insurance are excluded from EFP RV and used only in Cash & Carry.<br>
+            <b>Cash & Carry:</b> Net = Deferred EFP - Front EFP - Carry Cost<br>
+            <b>Carry Per Day:</b> Net Cash Carry / Hold Days<br>
+            <b>Capital Used:</b> Spot Mid + Front EFP<br>
+            <b>ROC:</b> Net Cash Carry / Capital Used<br>
+            <b>Annualised ROC:</b> ROC × 360 / Hold Days
+        </p>
+    """)
+
+    # EFP RV opportunities
+
+    if 'efp_rv_opportunity_df' in globals() and efp_rv_opportunity_df is not None and not efp_rv_opportunity_df.empty:
+        opp_cols = [
+            'Metal',
+            'Month/Year',
+            'Days',
+            'EFP Mid ($/oz)',
+            'OTC ($/oz)',
+            'EFP RV ($/oz)',
+            'Ann Mid (%)',
+            'Metal Fwd (%)',
+            'Z-Score',
+            'Percentile',
+            'Signal',
+        ]
+
+        html_parts.append(f"""
+        <div style="margin:30px 0; padding:15px; background-color:{BG_CARD}; border-left:4px solid {C_AMBER};">
+            <h3 style="color:{C_AMBER}; margin-top:0;">Top EFP RV Opportunities</h3>
+            <p style="color:{C_MUTED}; font-size:11px;">
+                Ranked by EFP RV $/oz. SOFR and funding spread are excluded from this screen.
+            </p>
+            <table style="border-collapse:collapse; width:100%; font-size:12px;">
+                <thead>
+                    <tr style="background-color:{BG_DARK}; color:{C_TEXT};">
+        """)
+
+        for col in opp_cols:
+            align = 'left' if col in ['Metal', 'Month/Year', 'Signal'] else 'right'
+            html_parts.append(
+                f'<th style="padding:8px; border:1px solid {C_MUTED}; text-align:{align};">{col}</th>'
+            )
+
+        html_parts.append('</tr></thead><tbody>')
+
+        for _, row in efp_rv_opportunity_df[opp_cols].head(12).iterrows():
+            html_parts.append('<tr>')
+
+            for col in opp_cols:
+                val = row[col]
+
+                if col in ['EFP Mid ($/oz)', 'OTC ($/oz)', 'EFP RV ($/oz)']:
+                    formatted = f"{val:+.2f}" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = (
+                        C_RED if col == 'EFP RV ($/oz)' and pd.notna(val) and val > 0
+                        else C_GREEN if col == 'EFP RV ($/oz)' and pd.notna(val) and val < 0
+                        else C_TEXT
+                    )
+
+                elif col in ['Ann Mid (%)', 'Metal Fwd (%)']:
+                    formatted = f"{val:+.2f}%" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_TEXT
+
+                elif col == 'Z-Score':
+                    formatted = f"{val:+.2f}" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_RED if pd.notna(val) and val > 1 else C_GREEN if pd.notna(val) and val < -1 else C_MUTED
+
+                elif col == 'Percentile':
+                    formatted = f"{val:.0f}%" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_TEXT
+
+                elif col == 'Signal':
+                    formatted = str(val)
+                    cell_color = signal_color(val)
+
+                else:
+                    formatted = str(val) if pd.notna(val) else "—"
+                    cell_color = C_TEXT
+
+                align = 'left' if col in ['Metal', 'Month/Year', 'Signal'] else 'right'
+
+                html_parts.append(
+                    f'<td style="padding:8px; border:1px solid {C_MUTED}; text-align:{align}; color:{cell_color};">{formatted}</td>'
+                )
+
+            html_parts.append('</tr>')
+
+        html_parts.append('</tbody></table></div>')
+
+    # Cash & Carry table
+
+    if 'cash_carry_df' in globals() and cash_carry_df is not None and not cash_carry_df.empty:
+        cc_cols = [
+            'Metal',
+            'Front Month',
+            'Deferred Month',
+            'Front EFP ($/oz)',
+            'Deferred EFP ($/oz)',
+            'Hold Days',
+            'Hold SOFR (%)',
+            'SOFR Spread (%)',
+            'Hold Funding Cost (%)',
+            'Insurance (%)',
+            'Gross Carry Spread ($/oz)',
+            'Carry Cost ($/oz)',
+            'Net Cash Carry ($/oz)',
+            'Carry Per Day ($/oz/day)',
+            'Capital Used ($/oz)',
+            'ROC (%)',
+            'Annualised ROC (%)',
+            'Delivery Trigger',
+            'Signal',
+        ]
+
+        html_parts.append(f"""
+        <div style="margin:30px 0; padding:15px; background-color:{BG_CARD}; border-left:4px solid {C_GREEN};">
+            <h3 style="color:{C_GREEN}; margin-top:0;">Cash & Carry Monitor</h3>
+            <p style="color:{C_MUTED}; font-size:11px;">
+                Net = Deferred EFP - Front EFP - Carry Cost<br>
+                Carry Cost uses Funding Cost = SOFR + SOFR Spread, plus insurance.
+            </p>
+            <table style="border-collapse:collapse; width:100%; font-size:12px;">
+                <thead>
+                    <tr style="background-color:{BG_DARK}; color:{C_TEXT};">
+        """)
+
+        for col in cc_cols:
+            align = 'left' if col in ['Metal', 'Front Month', 'Deferred Month', 'Delivery Trigger', 'Signal'] else 'right'
+            html_parts.append(
+                f'<th style="padding:8px; border:1px solid {C_MUTED}; text-align:{align};">{col}</th>'
+            )
+
+        html_parts.append('</tr></thead><tbody>')
+
+        for _, row in cash_carry_df[cc_cols].iterrows():
+            html_parts.append('<tr>')
+
+            for col in cc_cols:
+                val = row[col]
+
+                if col in [
+                    'Front EFP ($/oz)',
+                    'Deferred EFP ($/oz)',
+                    'Gross Carry Spread ($/oz)',
+                    'Carry Cost ($/oz)',
+                    'Net Cash Carry ($/oz)',
+                ]:
+                    formatted = f"{val:+.2f}" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_GREEN if pd.notna(val) and not np.isnan(val) and val > 0 else C_RED
+
+                elif col == 'Carry Per Day ($/oz/day)':
+                    formatted = f"{val:+.4f}" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_GREEN if pd.notna(val) and not np.isnan(val) and val > 0 else C_RED
+
+                elif col in ['Hold SOFR (%)', 'SOFR Spread (%)', 'Hold Funding Cost (%)', 'Insurance (%)']:
+                    formatted = f"{val:+.3f}%" if col == 'Insurance (%)' and pd.notna(val) and not np.isnan(val) else (
+                        f"{val:+.2f}%" if pd.notna(val) and not np.isnan(val) else "—"
+                    )
+                    cell_color = C_TEXT
+
+                elif col == 'Capital Used ($/oz)':
+                    formatted = f"{val:,.2f}" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_TEXT
+
+                elif col in ['ROC (%)', 'Annualised ROC (%)']:
+                    formatted = f"{val:+.2f}%" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_GREEN if pd.notna(val) and not np.isnan(val) and val > 0 else C_RED
+
+                else:
+                    formatted = str(val) if pd.notna(val) else "—"
+                    cell_color = C_TEXT
+
+                align = 'left' if col in ['Metal', 'Front Month', 'Deferred Month', 'Delivery Trigger', 'Signal'] else 'right'
+
+                html_parts.append(
+                    f'<td style="padding:8px; border:1px solid {C_MUTED}; text-align:{align}; color:{cell_color};">{formatted}</td>'
+                )
+
+            html_parts.append('</tr>')
+
+        html_parts.append('</tbody></table></div>')
+
+    # EFP tables by metal
+
+    for metal in METALS:
+        df = efp_data[metal]
+        color = METAL_COLORS[metal]
+        name = METAL_NAMES[metal]
+        spot_mid = spot_ba[SPOT_TICKERS[metal]]['mid']
+
+        display_cols = [
+            'Month/Year',
+            'FND',
+            'Days',
+            'EFP Mid',
+            'OTC ($/oz)',
+            'EFP RV ($/oz)',
+            'Ann Mid (%)',
+            'Metal Fwd (%)',
+            'Z-Score',
+            'Percentile',
+            'Signal',
+        ]
+
+        html_parts.append(f"""
+        <div style="margin:30px 0; padding:15px; background-color:{BG_CARD}; border-left:4px solid {color};">
+            <h3 style="color:{color}; margin-top:0;">{name} ({metal}) — Spot Mid: ${spot_mid:,.4f}</h3>
+            <table style="border-collapse:collapse; width:100%; font-size:12px;">
+                <thead>
+                    <tr style="background-color:{BG_DARK}; color:{C_TEXT};">
+        """)
+
+        for col in display_cols:
+            html_parts.append(
+                f'<th style="padding:8px; border:1px solid {C_MUTED}; text-align:right;">{col}</th>'
+            )
+
+        html_parts.append('</tr></thead><tbody>')
+
+        for _, row in df.iterrows():
+            html_parts.append('<tr>')
+
+            for col in display_cols:
+                val = row[col]
+
+                if col in ['EFP Mid', 'OTC ($/oz)', 'EFP RV ($/oz)']:
+                    formatted = f"{val:+.2f}" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = (
+                        C_RED if col == 'EFP RV ($/oz)' and pd.notna(val) and val > 0
+                        else C_GREEN if col == 'EFP RV ($/oz)' and pd.notna(val) and val < 0
+                        else C_TEXT
+                    )
+
+                elif col in ['Ann Mid (%)', 'Metal Fwd (%)']:
+                    formatted = f"{val:+.2f}%" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_TEXT
+
+                elif col == 'Z-Score':
+                    formatted = f"{val:+.2f}" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_RED if pd.notna(val) and val > 1 else C_GREEN if pd.notna(val) and val < -1 else C_MUTED
+
+                elif col == 'Percentile':
+                    formatted = f"{val:.0f}%" if pd.notna(val) and not np.isnan(val) else "—"
+                    cell_color = C_TEXT
+
+                elif col == 'Signal':
+                    formatted = str(val)
+                    cell_color = signal_color(val)
+
+                else:
+                    formatted = str(val) if pd.notna(val) else "—"
+                    cell_color = C_TEXT
+
+                html_parts.append(
+                    f'<td style="padding:8px; border:1px solid {C_MUTED}; text-align:right; color:{cell_color};">{formatted}</td>'
+                )
+
+            html_parts.append('</tr>')
+
+        html_parts.append('</tbody></table></div>')
+
+    html_parts.append('</div>')
+
+    return ''.join(html_parts)
+
+
+print("✅ HTML dashboard generator loaded")
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 10 — Save / Refresh Widgets
+# ─────────────────────────────────────────────────────────────
+
+save_button = widgets.Button(
+    description='💾 Save Inputs',
+    button_style='success',
+    tooltip='Save current forward curve and funding inputs',
+    layout=widgets.Layout(width='220px', height='40px')
+)
+
+refresh_button = widgets.Button(
+    description='🔄 Refresh Data',
+    button_style='info',
+    tooltip='Click to refresh market data, SOFR curve, RV analytics and historical store',
+    layout=widgets.Layout(width='220px', height='40px')
+)
+
+status_label = widgets.HTML(value='')
+tables_html = widgets.HTML(value='')
+
+
+def on_save_click(b):
+    try:
+        save_forward_curves(verbose=True)
+
+        status_label.value = (
+            f"✅ Inputs saved at {datetime.now().strftime('%H:%M:%S')}"
+        )
+
+    except Exception as e:
+        status_label.value = f"❌ Save error: {str(e)}"
+        import traceback
+        traceback.print_exc()
+
+
+def on_refresh_click(b):
+    b.disabled = True
+    b.description = '⏳ Refreshing...'
+
+    status_label.value = (
+        f"🔄 Refreshing at {datetime.now().strftime('%H:%M:%S')}..."
+    )
+
+    try:
+        # Force-save current widget values before any redraw or data refresh.
+        save_forward_curves(verbose=True)
+
+        fetch_all_data()
+
+        tables_html.value = generate_all_tables_html()
+
+        status_label.value = (
+            f"✅ Data refreshed at "
+            f"{datetime.now().strftime('%H:%M:%S')} "
+            f"| History updated: {HISTORY_FILE}"
+        )
+
+    except Exception as e:
+        status_label.value = f"❌ Error: {str(e)}"
+        import traceback
+        traceback.print_exc()
+
+    finally:
+        b.disabled = False
+        b.description = '🔄 Refresh Data'
+
+
+save_button.on_click(on_save_click)
+refresh_button.on_click(on_refresh_click)
+
+
+# ─────────────────────────────────────────────────────────────
+#  CELL 11 — Initial Display / Initial Load
+# ─────────────────────────────────────────────────────────────
+
+display_forward_inputs()
+
+display(widgets.VBox([
+    widgets.HBox([
+        save_button,
+        refresh_button
+    ]),
+    status_label,
+    tables_html
+]))
+
+status_label.value = "🔄 Loading initial data..."
+
+try:
+    # Save current widget state before initial load.
+    save_forward_curves(verbose=False)
+
+    fetch_all_data()
+
+    tables_html.value = generate_all_tables_html()
+
+    status_label.value = (
+        f"✅ Data loaded at {datetime.now().strftime('%H:%M:%S')} "
+        f"| History updated: {HISTORY_FILE}"
+    )
+
+except Exception as e:
+    status_label.value = f"❌ Error during initial load: {str(e)}"
+    import traceback
+    traceback.print_exc()
+
+print("\n✅ Refresh button ready — pure EFP RV, OTC comparison, cash & carry funding costs, metal forwards and historical store active")
