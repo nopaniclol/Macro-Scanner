@@ -219,42 +219,32 @@ SOFR_CURVE_TICKERS = {
 }
 
 
+# ─────────────────────────────────────────────────────────────
+#  DEFAULT METAL FORWARD CURVES
+#
+#  These are FALLBACKS, used only when pm_forward_curves_latest.csv does not
+#  exist. Overwrite them with your own curve on the first run.
+#
+#  The forward is GOFO: forward = SOFR - lease. With SOFR near 4.3% and gold
+#  leasing near zero, the gold forward sits just UNDER SOFR -- around 4.3%,
+#  not 1.1%.
+#
+#  The previous values (gold 1M 1.00%, 3M 1.10%) were roughly 3.2pp too low.
+#  On a 180-day contract that manufactures about $69/oz of phantom richness
+#  against a sub-$1 bound, so every contract reads SELL EFP, every day, and
+#  the corroboration column "confirms" it because both sides of that
+#  comparison move together. The tell is the derived Lease (%) column reading
+#  ~3.2% for gold when gold leases near zero.
+#
+#  PGM leases are structurally higher than gold and silver, so their forwards
+#  sit further below SOFR.
+# ─────────────────────────────────────────────────────────────
+
 DEFAULT_METAL_FORWARD_CURVES = {
-    'XAU': {
-        '1M': 1.00,
-        '2M': 1.05,
-        '3M': 1.10,
-        '6M': 1.20,
-        '9M': 1.28,
-        '12M': 1.35,
-    },
-
-    'XAG': {
-        '1M': 2.00,
-        '2M': 2.10,
-        '3M': 2.20,
-        '6M': 2.35,
-        '9M': 2.42,
-        '12M': 2.50,
-    },
-
-    'XPT': {
-        '1M': 1.50,
-        '2M': 1.60,
-        '3M': 1.70,
-        '6M': 1.85,
-        '9M': 1.92,
-        '12M': 2.00,
-    },
-
-    'XPD': {
-        '1M': 1.75,
-        '2M': 1.85,
-        '3M': 1.95,
-        '6M': 2.10,
-        '9M': 2.18,
-        '12M': 2.25,
-    },
+    'XAU': {'1M': 4.30, '2M': 4.28, '3M': 4.25, '6M': 4.18, '9M': 4.10, '12M': 4.05},
+    'XAG': {'1M': 3.90, '2M': 3.88, '3M': 3.85, '6M': 3.75, '9M': 3.68, '12M': 3.60},
+    'XPT': {'1M': 2.80, '2M': 2.85, '3M': 2.90, '6M': 3.00, '9M': 3.10, '12M': 3.20},
+    'XPD': {'1M': 3.20, '2M': 3.25, '3M': 3.30, '6M': 3.40, '9M': 3.48, '12M': 3.55},
 }
 
 
@@ -307,6 +297,22 @@ BUFFER_NOISE_MULT = 1.0
 NOISE_FLOOR_PP = 0.55
 
 CORROB_WARN_X = 3.0
+
+# Per-metal plausible lease bands. The old global [-5, +60] was far too wide
+# to catch the failure that matters: a wrong forward curve puts gold's derived
+# lease at ~3.2% and [-5, +60] waves it through. Gold and silver lease within
+# roughly a point of zero outside a squeeze; PGMs run structurally higher and
+# spiked to 35% in 2025, so their upper band stays wide.
+#
+# When the derived lease falls outside its band the Bound Signal for that metal
+# is SUPPRESSED rather than shown, because the bound is built on that lease and
+# a signal computed from a bad input is worse than no signal.
+LEASE_PLAUSIBLE_BAND = {
+    'XAU': (-1.5, 8.0),
+    'XAG': (-1.5, 40.0),
+    'XPT': (-2.0, 45.0),
+    'XPD': (-2.0, 45.0),
+}
 
 LEASE_SANITY_MIN_PCT = -5.0
 
@@ -1712,12 +1718,32 @@ def bound_thresholds(
 #  CELL 8 — Bound Signal Functions
 # ─────────────────────────────────────────────────────────────
 
+def lease_is_plausible(metal, lease_pct):
+    """
+    Is the derived lease inside its metal's plausible band?
+
+    The bound is built on this lease, so if it is wrong every threshold and
+    every signal downstream is wrong with it. Returns True when there is no
+    lease to judge, so a missing value does not silently suppress everything.
+    """
+    if not is_valid_number(lease_pct):
+        return True
+
+    low, high = LEASE_PLAUSIBLE_BAND.get(
+        metal,
+        (LEASE_SANITY_MIN_PCT, LEASE_SANITY_MAX_PCT)
+    )
+
+    return low <= float(lease_pct) <= high
+
+
 def classify_bound(
     metal,
     efp_rv,
     bound,
     spot_mid=np.nan,
-    days=np.nan
+    days=np.nan,
+    lease_pct=np.nan
 ):
     """
     Positive RV beyond the threshold:
@@ -1737,6 +1763,12 @@ def classify_bound(
         not is_valid_number(bound)
     ):
         return 'No bound'
+
+    # Global curve-health flag, set by check_forward_curve_health(). A stale or
+    # mistyped forward curve biases EVERY metal the same way at once, so the
+    # response is global rather than per-metal.
+    if globals().get('FORWARD_CURVE_SUSPECT', False):
+        return 'CHECK FWD CURVE'
 
     sell_threshold, buy_threshold = (
         bound_thresholds(
@@ -2041,6 +2073,93 @@ print(
 # ─────────────────────────────────────────────────────────────
 #  CELL 9 — Colour Functions
 # ─────────────────────────────────────────────────────────────
+
+FORWARD_CURVE_SUSPECT = False
+
+# How far the entered forward may sit below the COMEX-implied forward, in
+# percentage points, before the curve is treated as suspect. Judged on the
+# MEDIAN across every metal and contract, not on any single reading.
+FORWARD_BIAS_TOLERANCE_PP = 1.5
+
+
+def check_forward_curve_health(efp_data_dict, verbose=True):
+    """
+    Is the entered forward curve systematically wrong?
+
+    A real dislocation hits one metal, occasionally two. A stale or mistyped
+    forward curve biases ALL FOUR at once and in the SAME direction, because
+    every OTC value is computed from it. That asymmetry is the discriminator --
+    a lease level on its own is not, since gold genuinely reached 4.82% in the
+    Feb-2025 tariff scare.
+
+    Sets the global FORWARD_CURVE_SUSPECT. While that is True every Bound
+    Signal reads 'CHECK FWD CURVE' instead of SELL/BUY, because a signal
+    computed from a bad curve is worse than no signal -- it looks tradeable.
+    """
+    global FORWARD_CURVE_SUSPECT
+
+    gaps = []
+
+    for metal in METALS:
+        if metal not in efp_data_dict:
+            continue
+        frame = efp_data_dict[metal]
+        for contract in frame.index:
+            entered = safe_float(frame.loc[contract, 'Metal Fwd (%)'])
+            implied = safe_float(frame.loc[contract, 'COMEX Fwd (%)'])
+            if is_valid_number(entered) and is_valid_number(implied):
+                gaps.append((metal, entered - implied))
+
+    if not gaps:
+        FORWARD_CURVE_SUSPECT = False
+        return False
+
+    values = [g for _, g in gaps]
+    median_gap = float(np.median(values))
+    same_direction = sum(1 for v in values if v < 0) / len(values)
+
+    # Suspect when the entered curve sits materially BELOW the COMEX-implied
+    # curve on a clear majority of observations, across metals.
+    metals_low = {
+        m for m, g in gaps if g < -FORWARD_BIAS_TOLERANCE_PP
+    }
+
+    FORWARD_CURVE_SUSPECT = bool(
+        median_gap < -FORWARD_BIAS_TOLERANCE_PP
+        and same_direction >= 0.75
+        and len(metals_low) >= 3
+    )
+
+    if verbose:
+        bar = '=' * 78
+        print(f"\n{bar}")
+        print("  FORWARD CURVE HEALTH")
+        print(bar)
+        print(f"  median (entered - COMEX-implied) : {median_gap:+.2f} pp")
+        print(f"  observations below implied       : {same_direction * 100:.0f}%")
+        print(f"  metals biased low by >{FORWARD_BIAS_TOLERANCE_PP:.1f}pp        : "
+              f"{len(metals_low)} of {len(METALS)}  {sorted(metals_low)}")
+
+        if FORWARD_CURVE_SUSPECT:
+            print()
+            print("  *** FORWARD CURVE SUSPECT — ALL SIGNALS SUPPRESSED ***")
+            print()
+            print("  Your entered forward sits well below what the COMEX futures")
+            print("  calendar implies, across most metals at once. A genuine")
+            print("  dislocation hits one metal, not all four in the same")
+            print("  direction, so this is far more likely a stale or mistyped")
+            print("  curve than a market event.")
+            print()
+            print("  OTC = spot x forward x days/360, so a forward that is too low")
+            print("  understates OTC and inflates every EFP RV by the same error.")
+            print()
+            print("  Fix the curve in the input widgets, save, and refresh.")
+        else:
+            print("  curve looks consistent with the futures calendar.")
+        print(bar)
+
+    return FORWARD_CURVE_SUSPECT
+
 
 def bound_signal_color(signal):
 
@@ -3692,7 +3811,8 @@ def fetch_all_data():
                     efp_rv,
                     arb_bound,
                     spot_mid,
-                    days
+                    days,
+                    lease_pct
                 )
             )
 
@@ -3797,6 +3917,39 @@ def fetch_all_data():
         efp_data[metal] = (
             metal_df
         )
+
+
+    # ---------------------------------------------------------
+    #  Forward-curve health, then re-classify
+    #
+    #  This has to run HERE. COMEX Fwd (%) is only added by
+    #  add_comex_corroboration() once a metal's full frame exists, so it does
+    #  not exist yet when the per-contract loop first calls classify_bound().
+    #  Check the curve now, then re-derive every Bound Signal so the
+    #  suppression actually takes effect on this refresh rather than the next.
+    # ---------------------------------------------------------
+
+    check_forward_curve_health(efp_data)
+
+    for metal in METALS:
+
+        if metal not in efp_data:
+            continue
+
+        frame = efp_data[metal]
+
+        for contract in frame.index:
+
+            frame.loc[contract, 'Bound Signal'] = classify_bound(
+                metal,
+                frame.loc[contract, 'EFP RV ($/oz)'],
+                frame.loc[contract, 'Arb Bound ($/oz)'],
+                frame.loc[contract, 'Spot Mid'],
+                frame.loc[contract, 'Days'],
+                frame.loc[contract, 'Lease (%)'],
+            )
+
+        efp_data[metal] = frame
 
 
     # ---------------------------------------------------------
