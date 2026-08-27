@@ -258,19 +258,13 @@ ROLLING_PERCENTILE_YEARS = 10          # rolling window for the CFTC level score
 MIN_POSITIONING_COMPONENTS = 1
 MIN_MOMENTUM_COMPONENTS = 2
 
-# COT is surveyed Tuesday and released the following Friday afternoon. The
-# weekly series is labelled with the Friday, but treating it as tradable at
-# that Friday's close is optimistic (release is 15:30 ET). Shifting one extra
-# business day keeps the forward-return study honest. Set to 0 to disable.
+# COT is surveyed Tuesday and released the following Friday afternoon. Shifting
+# the weekly series by one release keeps a score dated to when the data was
+# actually public, rather than when it was surveyed. Set to 0 to disable.
 CFTC_RELEASE_LAG_WEEKS = 1
-
-FORWARD_HORIZONS = (1, 5, 20, 60)
 
 POSITIONING_WEIGHTS = {"cftc_positioning": 0.65, "options_skew": 0.35}
 MOMENTUM_WEIGHTS = {"rsi": 1 / 3, "dev_20d": 1 / 3, "dev_100d": 1 / 3}
-
-SCORE_BUCKET_BINS = [-np.inf, -5.0, -2.0, 2.0, 5.0, np.inf]
-SCORE_BUCKET_LABELS = ["very_negative", "negative", "neutral", "positive", "very_positive"]
 
 
 # -----------------------------------------------------------------------------
@@ -303,6 +297,11 @@ FORCE_CACHE_REFRESH = False
 # duplicating it.
 
 SCORE_HISTORY_PATH = "sfxpm_score_history"
+
+# Also save the full daily score series recomputed from history each run.
+# Optional -- the tracker does not need it; it just lets you chart how a score
+# evolved without waiting for snapshots to accumulate. Roughly 12 MB per run.
+SAVE_SIGNAL_HISTORY = True
 
 SCORE_HISTORY_COLUMNS = [
     "label", "asset_class",
@@ -386,16 +385,6 @@ def weighted_mean_frame(
 
     result = numerator / denominator.replace(0, np.nan)
     return result.where(present.sum(axis=1) >= min_components)
-
-
-def score_bucket(series: pd.Series) -> pd.Categorical:
-    """Bucket -10..+10 scores into five directional bands."""
-    return pd.cut(
-        series,
-        bins=SCORE_BUCKET_BINS,
-        labels=SCORE_BUCKET_LABELS,
-        include_lowest=True,
-    )
 
 
 # =============================================================================
@@ -519,18 +508,67 @@ def _save_manifest(manifest: dict) -> None:
         json.dump(manifest, handle, indent=2, sort_keys=True)
 
 
-def _download_series_bql(ticker: str, start_date: str) -> pd.Series:
-    """Download PX_LAST history for one Bloomberg ticker."""
-    date_range = bq.func.range(start_date, "0d")
-    request = bql.Request(ticker, {"px_last": bq.data.px_last(dates=date_range)})
-    frame = bql.combined_df(bq.execute(request))
+def _extract_date_value(frame: pd.DataFrame) -> pd.Series:
+    """
+    Pull a date-indexed value series out of whatever shape BQL returns.
 
-    if not {"DATE", "px_last"}.issubset(frame.columns):
+    Column naming varies by field and BQL version, so resolve by name where
+    possible and fall back to the frame's own index for the dates.
+    """
+    lookup = {str(c).lower(): c for c in frame.columns}
+
+    value_column = next(
+        (lookup[name] for name in ("value", "px_last") if name in lookup), None
+    )
+    if value_column is None:
+        raise ValueError(f"No value column in BQL output. Columns: {list(frame.columns)}")
+
+    date_column = lookup.get("date")
+    if date_column is not None:
+        series = frame.set_index(date_column)[value_column]
+    else:
+        series = frame[value_column]
+
+    if isinstance(series, pd.DataFrame):  # duplicate column names
+        series = series.iloc[:, 0]
+
+    return series
+
+
+def _download_series_bql(ticker: str, start_date: str) -> pd.Series:
+    """
+    Download PX_LAST history for one Bloomberg ticker.
+
+    Follows the BQuant request pattern: dates are passed via with_params as an
+    absolute start/end range, and the response is read with each item's .df()
+    rather than the deprecated bql.combined_df.
+    """
+    end_date = date.today().strftime("%Y-%m-%d")
+    field = bq.data.px_last()
+
+    request = bql.Request(
+        ticker,
+        {"Date": field["DATE"], "Value": field["value"]},
+        with_params={"fill": "na", "dates": bq.func.range(start_date, end_date)},
+    )
+
+    response = bq.execute(request)
+    frame = pd.concat([item.df() for item in response], axis=1)
+
+    if frame.empty:
         raise ValueError(
-            f"Unexpected BQL output for {ticker}. Columns: {list(frame.columns)}"
+            f"BQL returned no rows for '{ticker}' over {start_date} to {end_date}. "
+            "Check the ticker is valid and has history in that window."
         )
 
-    return clean_series(frame[["DATE", "px_last"]].set_index("DATE")["px_last"])
+    series = clean_series(_extract_date_value(frame))
+
+    if series.empty:
+        raise ValueError(
+            f"BQL returned rows for '{ticker}' but no usable numeric values."
+        )
+
+    return series
 
 
 def fetch_series_bql(ticker: str, start_date: str) -> pd.Series:
@@ -604,6 +642,16 @@ def clear_cache() -> None:
 # MOMENTUM
 # =============================================================================
 
+EMPTY_MOMENTUM_SUMMARY = {
+    "rsi": None,
+    "rsi_raw": None,
+    "dev_20d": None,
+    "dev_100d": None,
+    "MOMENTUM": None,
+    "momentum_component_count": 0,
+}
+
+
 def compute_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
     """Wilder-style RSI."""
     prices = clean_series(prices)
@@ -635,6 +683,9 @@ def deviation_from_ma(prices: pd.Series, window: int) -> pd.Series:
 
 def build_momentum_history(prices: pd.Series) -> Tuple[pd.DataFrame, dict]:
     """Daily momentum history plus a current-state summary."""
+    if prices is None or len(prices) == 0:
+        return pd.DataFrame(), dict(EMPTY_MOMENTUM_SUMMARY)
+
     rsi_raw = compute_rsi(prices, period=14)
 
     history = pd.concat(
@@ -655,6 +706,9 @@ def build_momentum_history(prices: pd.Series) -> Tuple[pd.DataFrame, dict]:
     history["MOMENTUM"] = weighted_mean_frame(
         history, MOMENTUM_WEIGHTS, MIN_MOMENTUM_COMPONENTS
     )
+
+    if history.empty:
+        return history, dict(EMPTY_MOMENTUM_SUMMARY)
 
     latest = history.iloc[-1]
     summary = {
@@ -775,6 +829,9 @@ def build_positioning_history(symbol: str, instrument: dict) -> Tuple[pd.DataFra
         ["cftc_level_rolling", "cftc_4wk_chg"]
     ].mean(axis=1)
 
+    if history.empty:
+        return pd.DataFrame(), dict(EMPTY_CFTC_SUMMARY)
+
     latest = history.iloc[-1]
     summary = {"cftc_metric": metric_name}
     summary.update(
@@ -873,79 +930,6 @@ def build_composite_history(
         out[["cftc_positioning", "options_skew"]].notna().sum(axis=1)
     )
     return out
-
-
-# =============================================================================
-# FORWARD-RETURN ANALYSIS
-# =============================================================================
-
-def add_forward_returns(history: pd.DataFrame, horizons=FORWARD_HORIZONS) -> pd.DataFrame:
-    """Add forward percentage returns for each trading-day horizon."""
-    out = history.copy()
-    for horizon in horizons:
-        out[f"fwd_{horizon}d_return_pct"] = (
-            out["price"].shift(-horizon) / out["price"] - 1.0
-        ) * 100.0
-    return out
-
-
-def _summarise_returns(values: pd.Series) -> dict:
-    """Mean/median/hit-rate/std for one set of forward returns."""
-    values = values.dropna()
-    return {
-        "observations": int(values.count()),
-        "mean_return_pct": values.mean() if len(values) else np.nan,
-        "median_return_pct": values.median() if len(values) else np.nan,
-        "positive_hit_rate_pct": (values > 0).mean() * 100.0 if len(values) else np.nan,
-        "return_std_pct": values.std() if len(values) else np.nan,
-    }
-
-
-def conditional_forward_return_table(
-    history: pd.DataFrame,
-    signal: str,
-    horizons=FORWARD_HORIZONS,
-) -> pd.DataFrame:
-    """Forward returns conditional on a single signal's bucket."""
-    forward_columns = [f"fwd_{h}d_return_pct" for h in horizons]
-    data = history[[signal] + forward_columns].copy()
-    data["bucket"] = score_bucket(data[signal])
-
-    rows = []
-    for bucket, group in data.groupby("bucket", observed=False):
-        for horizon in horizons:
-            rows.append(
-                {
-                    "signal": signal,
-                    "bucket": str(bucket),
-                    "horizon_days": horizon,
-                    **_summarise_returns(group[f"fwd_{horizon}d_return_pct"]),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-def combined_regime_table(history: pd.DataFrame, horizons=FORWARD_HORIZONS) -> pd.DataFrame:
-    """Forward returns conditional on the joint positioning/momentum regime."""
-    data = history.copy()
-    data["positioning_bucket"] = score_bucket(data["POSITIONING"])
-    data["momentum_bucket"] = score_bucket(data["MOMENTUM"])
-
-    rows = []
-    grouped = data.groupby(["positioning_bucket", "momentum_bucket"], observed=False)
-    for (positioning_bucket, momentum_bucket), group in grouped:
-        for horizon in horizons:
-            stats = _summarise_returns(group[f"fwd_{horizon}d_return_pct"])
-            stats.pop("return_std_pct", None)
-            rows.append(
-                {
-                    "positioning_bucket": str(positioning_bucket),
-                    "momentum_bucket": str(momentum_bucket),
-                    "horizon_days": horizon,
-                    **stats,
-                }
-            )
-    return pd.DataFrame(rows)
 
 
 # =============================================================================
@@ -1178,17 +1162,6 @@ def plot_score_history(
 # PER-INSTRUMENT PROCESSING
 # =============================================================================
 
-EMPTY_MOMENTUM_SUMMARY = {
-    "rsi": None,
-    "rsi_raw": None,
-    "dev_20d": None,
-    "dev_100d": None,
-    "MOMENTUM": None,
-    "momentum_component_count": 0,
-}
-
-BACKTEST_SIGNALS = ("POSITIONING", "MOMENTUM", "cftc_positioning", "options_skew")
-
 
 def process_instrument(symbol: str, instrument: dict) -> Tuple[dict, Optional[pd.DataFrame]]:
     """Fetch, score and assemble everything for one instrument."""
@@ -1234,9 +1207,7 @@ def process_instrument(symbol: str, instrument: dict) -> Tuple[dict, Optional[pd
     if momentum_history.empty:
         return row, None
 
-    full_history = add_forward_returns(
-        build_composite_history(momentum_history, cftc_history, rr_history)
-    )
+    full_history = build_composite_history(momentum_history, cftc_history, rr_history)
     full_history["symbol"] = symbol
     return row, full_history
 
@@ -1253,27 +1224,13 @@ REPORT_COLUMNS = [
 
 
 def main() -> None:
-    rows, histories, backtests, regimes = [], {}, [], []
+    rows, histories = [], {}
 
     for symbol, instrument in INSTRUMENTS.items():
         row, history = process_instrument(symbol, instrument)
         rows.append(row)
-
-        if history is None:
-            continue
-
-        histories[symbol] = history
-
-        for signal in BACKTEST_SIGNALS:
-            if signal in history.columns and history[signal].notna().any():
-                table = conditional_forward_return_table(history, signal)
-                table.insert(0, "symbol", symbol)
-                backtests.append(table)
-
-        if history["POSITIONING"].notna().any() and history["MOMENTUM"].notna().any():
-            table = combined_regime_table(history)
-            table.insert(0, "symbol", symbol)
-            regimes.append(table)
+        if history is not None:
+            histories[symbol] = history
 
     report = pd.DataFrame(rows).set_index("symbol").reindex(columns=REPORT_COLUMNS)
 
@@ -1283,44 +1240,28 @@ def main() -> None:
     flag_extremes(report)
     plot_rsi_heatmap(report, ncols=5)
 
-    backtest_report = pd.concat(backtests, ignore_index=True) if backtests else pd.DataFrame()
-    regime_report = pd.concat(regimes, ignore_index=True) if regimes else pd.DataFrame()
-    combined_history = (
-        pd.concat(histories, names=["instrument", "date"]) if histories else pd.DataFrame()
-    )
-
-    if not backtest_report.empty:
-        print("\nSingle-signal forward-return analysis:")
-        print(backtest_report.round(2).to_string(index=False))
-
-    if not regime_report.empty:
-        print("\nCombined positioning and momentum regimes:")
-        print(regime_report.round(2).to_string(index=False))
-
     run_date = date.today().isoformat()
-
     print()
-    for frame, path, keep_index in [
-        (report, f"sfxpm_report_{run_date}.csv", True),
-        (backtest_report, f"sfxpm_signal_backtest_{run_date}.csv", False),
-        (regime_report, f"sfxpm_combined_regimes_{run_date}.csv", False),
-    ]:
-        frame.to_csv(path, index=keep_index)
-        print(f"Saved {path}")
 
-    # Daily signal history is large (tens of MB as CSV) -- store it columnar.
-    if not combined_history.empty:
-        path = save_frame(
-            combined_history.reset_index(),
-            f"sfxpm_daily_signal_history_{run_date}",
-        )
-        print(f"Saved {path}")
+    report_path = f"sfxpm_report_{run_date}.csv"
+    report.to_csv(report_path)
+    print(f"Saved {report_path}")
 
     score_log = append_score_history(report, run_date)
     print(
         f"Saved {_storage_path(SCORE_HISTORY_PATH)} "
         f"({score_log['run_date'].nunique()} snapshot date(s), {len(score_log)} rows)"
     )
+
+    # The full daily score series, recomputed from history each run. Not needed
+    # for the tracker itself -- it is here so you can chart how a score evolved
+    # without waiting for weekly snapshots to accumulate. Set False to skip.
+    if SAVE_SIGNAL_HISTORY and histories:
+        combined_history = pd.concat(histories, names=["instrument", "date"])
+        path = save_frame(
+            combined_history.reset_index(), f"sfxpm_daily_signal_history_{run_date}"
+        )
+        print(f"Saved {path}")
 
 
 if __name__ == "__main__":
