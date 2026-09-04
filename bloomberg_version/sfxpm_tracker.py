@@ -244,8 +244,8 @@ INSTRUMENTS: Dict[str, dict] = {
 # MODEL PARAMETERS
 # =============================================================================
 
-PRICE_HISTORY_START = "2000-01-01"
-CFTC_HISTORY_START = "2000-01-01"
+PRICE_HISTORY_START = "2010-01-01"
+CFTC_HISTORY_START = "2010-01-01"
 RR_HISTORY_START = "2018-01-01"
 
 ZSCORE_CAP = 3.0
@@ -1222,46 +1222,1751 @@ REPORT_COLUMNS = [
     "rsi", "rsi_raw", "dev_20d", "dev_100d",
 ]
 
+# =============================================================================
+# ENHANCED TRADER UI
+# Paste this block immediately after REPORT_COLUMNS and before your old main().
+# This does not change the underlying positioning or momentum calculations.
+# =============================================================================
+
+try:
+    import ipywidgets as widgets
+    from IPython.display import display, clear_output
+
+    _WIDGETS_AVAILABLE = True
+except ImportError:
+    _WIDGETS_AVAILABLE = False
+
+
+# =============================================================================
+# UI PARAMETERS
+# =============================================================================
+
+UI_FORWARD_HORIZONS = {
+    "1W": 5,
+    "1M": 21,
+    "3M": 63,
+}
+
+UI_BUCKET_EDGES = [
+    -np.inf,
+    -5.0,
+    -2.0,
+    2.0,
+    5.0,
+    np.inf,
+]
+
+UI_BUCKET_LABELS = [
+    "<-5",
+    "-5 to -2",
+    "-2 to +2",
+    "+2 to +5",
+    ">+5",
+]
+
+UI_CHANGE_WINDOWS = {
+    "1W": 5,
+    "1M": 21,
+    "3M": 63,
+}
+
+UI_MIN_FORWARD_OBSERVATIONS = 20
+
+
+# =============================================================================
+# UI HELPERS
+# =============================================================================
+
+def _score_change(series: pd.Series, periods: int) -> float:
+    """
+    Change in a score across a specified number of observations.
+
+    For the daily composite history:
+        5 observations  = approximately 1 week
+        21 observations = approximately 1 month
+        63 observations = approximately 3 months
+    """
+    values = pd.to_numeric(series, errors="coerce").dropna()
+
+    if len(values) <= periods:
+        return np.nan
+
+    return float(values.iloc[-1] - values.iloc[-periods - 1])
+
+
+def _current_percentile(series: pd.Series) -> float:
+    """
+    Percentile rank of the latest score against its available history.
+
+    Returns a value between 0 and 100.
+    """
+    values = pd.to_numeric(series, errors="coerce").dropna()
+
+    if len(values) < 20:
+        return np.nan
+
+    latest = values.iloc[-1]
+    return float((values <= latest).mean() * 100.0)
+
+
+def _bucket_series(series: pd.Series) -> pd.Series:
+    """
+    Assign a -10 to +10 score into one of five signal buckets.
+    """
+    return pd.cut(
+        pd.to_numeric(series, errors="coerce"),
+        bins=UI_BUCKET_EDGES,
+        labels=UI_BUCKET_LABELS,
+        include_lowest=True,
+        right=False,
+    )
+
+
+def _quadrant_signal(
+    positioning: Optional[float],
+    momentum: Optional[float],
+) -> str:
+    """
+    Convert the positioning and momentum combination into a trading regime.
+    """
+    if pd.isna(positioning) or pd.isna(momentum):
+        return "Insufficient data"
+
+    if positioning >= 2 and momentum >= 2:
+        return "Trend long / crowded"
+
+    if positioning <= -2 and momentum <= -2:
+        return "Bear trend / crowded short"
+
+    if positioning >= 2 and momentum <= -2:
+        return "Crowded-long unwind risk"
+
+    if positioning <= -2 and momentum >= 2:
+        return "Short-squeeze watch"
+
+    if momentum >= 2:
+        return "Positive momentum"
+
+    if momentum <= -2:
+        return "Negative momentum"
+
+    return "Neutral / transition"
+
+
+def enrich_report_for_ui(
+    report: pd.DataFrame,
+    histories: Dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Add UI and trader-focused metrics to the current report.
+
+    Added fields:
+        POSITIONING_PCTL
+        POSITIONING_CHG_1W
+        POSITIONING_CHG_1M
+        POSITIONING_CHG_3M
+
+        MOMENTUM_PCTL
+        MOMENTUM_CHG_1W
+        MOMENTUM_CHG_1M
+        MOMENTUM_CHG_3M
+
+        COMBINED
+        SIGNAL
+        ABS_EXTREME
+        RANK
+    """
+    out = report.copy()
+
+    for symbol, history in histories.items():
+
+        if symbol not in out.index:
+            continue
+
+        if history is None or history.empty:
+            continue
+
+        for score in ("POSITIONING", "MOMENTUM"):
+
+            if score not in history.columns:
+                continue
+
+            out.loc[
+                symbol,
+                f"{score}_PCTL",
+            ] = _current_percentile(history[score])
+
+            for window_label, periods in UI_CHANGE_WINDOWS.items():
+
+                out.loc[
+                    symbol,
+                    f"{score}_CHG_{window_label}",
+                ] = _score_change(
+                    history[score],
+                    periods,
+                )
+
+    # Equal-weight display score.
+    # This is for ranking and UI display only.
+    # It does not replace the existing model composites.
+    out["COMBINED"] = out[
+        ["POSITIONING", "MOMENTUM"]
+    ].mean(
+        axis=1,
+        skipna=True,
+    )
+
+    no_composite_data = (
+        out[["POSITIONING", "MOMENTUM"]]
+        .notna()
+        .sum(axis=1)
+        == 0
+    )
+
+    out.loc[no_composite_data, "COMBINED"] = np.nan
+
+    out["SIGNAL"] = [
+        _quadrant_signal(positioning, momentum)
+        for positioning, momentum in zip(
+            out["POSITIONING"],
+            out["MOMENTUM"],
+        )
+    ]
+
+    # Rank by the most extreme of positioning or momentum.
+    out["ABS_EXTREME"] = out[
+        ["POSITIONING", "MOMENTUM"]
+    ].abs().max(axis=1)
+
+    out["RANK"] = out["ABS_EXTREME"].rank(
+        method="min",
+        ascending=False,
+    )
+
+    return out.sort_values(
+        ["RANK", "COMBINED"],
+        ascending=[True, False],
+    )
+
+
+# =============================================================================
+# FORWARD RETURN ANALYSIS
+# =============================================================================
+
+def forward_return_analysis(
+    history: pd.DataFrame,
+    min_observations: int = UI_MIN_FORWARD_OBSERVATIONS,
+) -> pd.DataFrame:
+    """
+    Calculate historical forward returns conditional on the instrument's
+    current positioning and momentum buckets.
+
+    The current state is defined by:
+        current positioning bucket
+        current momentum bucket
+
+    Historical dates matching both buckets are selected.
+
+    Forward returns are calculated for:
+        1W = 5 trading days
+        1M = 21 trading days
+        3M = 63 trading days
+
+    The historical observations overlap. This is intentional for descriptive
+    analysis, but it means the observation count should not be interpreted as
+    a count of fully independent events.
+    """
+    required_columns = {
+        "price",
+        "POSITIONING",
+        "MOMENTUM",
+    }
+
+    if history is None or history.empty:
+        return pd.DataFrame()
+
+    if not required_columns.issubset(history.columns):
+        return pd.DataFrame()
+
+    work = history[
+        [
+            "price",
+            "POSITIONING",
+            "MOMENTUM",
+        ]
+    ].copy().sort_index()
+
+    work["positioning_bucket"] = _bucket_series(
+        work["POSITIONING"]
+    )
+
+    work["momentum_bucket"] = _bucket_series(
+        work["MOMENTUM"]
+    )
+
+    valid_states = work[
+        [
+            "positioning_bucket",
+            "momentum_bucket",
+        ]
+    ].dropna()
+
+    if valid_states.empty:
+        return pd.DataFrame()
+
+    current_positioning_bucket = (
+        valid_states.iloc[-1]["positioning_bucket"]
+    )
+
+    current_momentum_bucket = (
+        valid_states.iloc[-1]["momentum_bucket"]
+    )
+
+    matching_state = (
+        (
+            work["positioning_bucket"]
+            == current_positioning_bucket
+        )
+        &
+        (
+            work["momentum_bucket"]
+            == current_momentum_bucket
+        )
+    )
+
+    rows = []
+
+    for horizon_label, trading_days in UI_FORWARD_HORIZONS.items():
+
+        forward_returns = (
+            (
+                work["price"].shift(-trading_days)
+                / work["price"]
+            )
+            - 1.0
+        ) * 100.0
+
+        sample = forward_returns[
+            matching_state
+        ].dropna()
+
+        observation_count = int(len(sample))
+
+        rows.append(
+            {
+                "Horizon": horizon_label,
+
+                "Avg %": (
+                    float(sample.mean())
+                    if observation_count
+                    else np.nan
+                ),
+
+                "Median %": (
+                    float(sample.median())
+                    if observation_count
+                    else np.nan
+                ),
+
+                "Hit rate %": (
+                    float((sample > 0).mean() * 100.0)
+                    if observation_count
+                    else np.nan
+                ),
+
+                "Best %": (
+                    float(sample.max())
+                    if observation_count
+                    else np.nan
+                ),
+
+                "Worst %": (
+                    float(sample.min())
+                    if observation_count
+                    else np.nan
+                ),
+
+                "Observations": observation_count,
+
+                "Reliable": (
+                    observation_count
+                    >= min_observations
+                ),
+
+                "Positioning bucket": str(
+                    current_positioning_bucket
+                ),
+
+                "Momentum bucket": str(
+                    current_momentum_bucket
+                ),
+            }
+        )
+
+    return pd.DataFrame(rows).set_index("Horizon")
+
+
+def build_expectancy_table(
+    histories: Dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Build one combined forward-return table for all instruments.
+    """
+    rows = []
+
+    for symbol, history in histories.items():
+
+        statistics = forward_return_analysis(history)
+
+        if statistics.empty:
+            continue
+
+        for horizon, row in statistics.iterrows():
+
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "Horizon": horizon,
+                    **row.to_dict(),
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame()
+
+    return (
+        pd.DataFrame(rows)
+        .set_index(["symbol", "Horizon"])
+        .sort_index()
+    )
+
+
+# =============================================================================
+# AUTOMATIC INTERPRETATION
+# =============================================================================
+
+def trader_interpretation(
+    symbol: str,
+    row: pd.Series,
+    statistics: pd.DataFrame,
+) -> str:
+    """
+    Generate a concise interpretation using the current scores and historical
+    conditional return analysis.
+    """
+    signal = row.get(
+        "SIGNAL",
+        "Insufficient data",
+    )
+
+    positioning = row.get(
+        "POSITIONING",
+        np.nan,
+    )
+
+    momentum = row.get(
+        "MOMENTUM",
+        np.nan,
+    )
+
+    positioning_change_1m = row.get(
+        "POSITIONING_CHG_1M",
+        np.nan,
+    )
+
+    momentum_change_1m = row.get(
+        "MOMENTUM_CHG_1M",
+        np.nan,
+    )
+
+    text = (
+        f"{symbol}: {signal}. "
+        f"Positioning {positioning:+.1f} and "
+        f"momentum {momentum:+.1f}."
+    )
+
+    if pd.notna(positioning_change_1m):
+
+        if positioning_change_1m > 0:
+            positioning_direction = "building"
+        elif positioning_change_1m < 0:
+            positioning_direction = "unwinding"
+        else:
+            positioning_direction = "unchanged"
+
+        text += (
+            f" Positioning is {positioning_direction} "
+            f"over 1M ({positioning_change_1m:+.1f} points)."
+        )
+
+    if pd.notna(momentum_change_1m):
+
+        if momentum_change_1m > 0:
+            momentum_direction = "strengthening"
+        elif momentum_change_1m < 0:
+            momentum_direction = "weakening"
+        else:
+            momentum_direction = "unchanged"
+
+        text += (
+            f" Momentum is {momentum_direction} "
+            f"over 1M ({momentum_change_1m:+.1f} points)."
+        )
+
+    if (
+        statistics is not None
+        and not statistics.empty
+        and "1M" in statistics.index
+    ):
+
+        one_month = statistics.loc["1M"]
+
+        observations = int(
+            one_month["Observations"]
+        )
+
+        if bool(one_month["Reliable"]):
+
+            text += (
+                f" Matching historical score buckets produced "
+                f"an average 1M return of "
+                f"{one_month['Avg %']:+.2f}% "
+                f"with a "
+                f"{one_month['Hit rate %']:.0f}% "
+                f"positive hit rate across "
+                f"{observations} observations."
+            )
+
+        else:
+
+            text += (
+                f" The matching 1M historical sample contains "
+                f"only {observations} observations, "
+                f"so treat the expectancy cautiously."
+            )
+
+    return text
+
+
+# =============================================================================
+# COMPOSITE HEATMAP
+# =============================================================================
+
+def plot_composite_heatmap(
+    ui_report: pd.DataFrame,
+    axis=None,
+) -> None:
+    """
+    Plot current positioning and momentum scores as a heatmap.
+
+    Red   = negative
+    Yellow = neutral
+    Green = positive
+    """
+    columns = [
+        "POSITIONING",
+        "MOMENTUM",
+    ]
+
+    data = (
+        ui_report[columns]
+        .copy()
+        .sort_values(
+            "POSITIONING",
+            ascending=False,
+        )
+    )
+
+    if data.empty:
+        if axis is None:
+            print("No composite data available to plot.")
+        return
+
+    if axis is None:
+        _, axis = plt.subplots(
+            figsize=(
+                6,
+                max(4, len(data) * 0.42),
+            )
+        )
+
+    matrix = data.fillna(0.0).to_numpy()
+
+    image = axis.imshow(
+        matrix,
+        cmap="RdYlGn",
+        vmin=-10,
+        vmax=10,
+        aspect="auto",
+    )
+
+    axis.set_xticks(
+        range(len(columns)),
+        [
+            "Positioning",
+            "Momentum",
+        ],
+    )
+
+    axis.set_yticks(
+        range(len(data)),
+        data.index,
+    )
+
+    for row_number in range(len(data)):
+
+        for column_number in range(len(columns)):
+
+            value = data.iloc[
+                row_number,
+                column_number,
+            ]
+
+            label = (
+                "NA"
+                if pd.isna(value)
+                else f"{value:+.1f}"
+            )
+
+            text_colour = (
+                "white"
+                if pd.notna(value)
+                and abs(value) > 5
+                else "black"
+            )
+
+            axis.text(
+                column_number,
+                row_number,
+                label,
+                ha="center",
+                va="center",
+                fontsize=8,
+                fontweight="bold",
+                color=text_colour,
+            )
+
+    axis.set_title(
+        "Composite Score Heatmap",
+        fontweight="bold",
+    )
+
+    if axis.figure:
+        colour_bar = axis.figure.colorbar(
+            image,
+            ax=axis,
+            fraction=0.035,
+            pad=0.03,
+        )
+
+        colour_bar.set_label(
+            "Score",
+            rotation=270,
+            labelpad=12,
+        )
+
+
+# =============================================================================
+# POSITIONING VS MOMENTUM QUADRANT
+# =============================================================================
+
+def plot_positioning_momentum_quadrant(
+    ui_report: pd.DataFrame,
+    axis=None,
+) -> None:
+    """
+    Positioning on the x-axis and momentum on the y-axis.
+
+    Upper right:
+        positive positioning and positive momentum
+
+    Upper left:
+        negative positioning and positive momentum
+        potential short-squeeze setup
+
+    Lower right:
+        positive positioning and negative momentum
+        potential crowded-long unwind
+
+    Lower left:
+        negative positioning and negative momentum
+    """
+    data = ui_report.dropna(
+        subset=[
+            "POSITIONING",
+            "MOMENTUM",
+        ]
+    )
+
+    if data.empty:
+        if axis is None:
+            print("No positioning/momentum data available.")
+        return
+
+    if axis is None:
+        _, axis = plt.subplots(
+            figsize=(8, 7)
+        )
+
+    asset_colours = {
+        "metal": "#D4A017",
+        "fx": "#4472C4",
+        "energy": "#70AD47",
+        "rates": "#7030A0",
+        "crypto": "#ED7D31",
+    }
+
+    plotted_asset_classes = set()
+
+    for symbol, row in data.iterrows():
+
+        asset_class = row.get(
+            "asset_class",
+            "other",
+        )
+
+        colour = asset_colours.get(
+            asset_class,
+            "#666666",
+        )
+
+        legend_label = (
+            asset_class.title()
+            if asset_class not in plotted_asset_classes
+            else None
+        )
+
+        plotted_asset_classes.add(asset_class)
+
+        axis.scatter(
+            row["POSITIONING"],
+            row["MOMENTUM"],
+            s=100,
+            color=colour,
+            edgecolor="white",
+            linewidth=0.8,
+            zorder=3,
+            label=legend_label,
+        )
+
+        axis.annotate(
+            symbol,
+            (
+                row["POSITIONING"],
+                row["MOMENTUM"],
+            ),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=9,
+            fontweight="bold",
+        )
+
+    axis.axvspan(
+        -10.5,
+        0,
+        ymin=0.5,
+        ymax=1.0,
+        color="#E2F0D9",
+        alpha=0.18,
+    )
+
+    axis.axvspan(
+        0,
+        10.5,
+        ymin=0.5,
+        ymax=1.0,
+        color="#C6E0B4",
+        alpha=0.18,
+    )
+
+    axis.axvspan(
+        -10.5,
+        0,
+        ymin=0.0,
+        ymax=0.5,
+        color="#F4CCCC",
+        alpha=0.18,
+    )
+
+    axis.axvspan(
+        0,
+        10.5,
+        ymin=0.0,
+        ymax=0.5,
+        color="#FCE4D6",
+        alpha=0.22,
+    )
+
+    axis.axvline(
+        0,
+        color="black",
+        linewidth=0.8,
+    )
+
+    axis.axhline(
+        0,
+        color="black",
+        linewidth=0.8,
+    )
+
+    for threshold in (-5, 5):
+
+        axis.axvline(
+            threshold,
+            color="grey",
+            linewidth=0.6,
+            linestyle="--",
+        )
+
+        axis.axhline(
+            threshold,
+            color="grey",
+            linewidth=0.6,
+            linestyle="--",
+        )
+
+    axis.set_xlim(
+        -10.5,
+        10.5,
+    )
+
+    axis.set_ylim(
+        -10.5,
+        10.5,
+    )
+
+    axis.set_xlabel(
+        "POSITIONING  ← short / long →"
+    )
+
+    axis.set_ylabel(
+        "MOMENTUM  ← negative / positive →"
+    )
+
+    axis.set_title(
+        "Positioning vs Momentum",
+        fontweight="bold",
+    )
+
+    axis.grid(alpha=0.15)
+
+    axis.text(
+        9.8,
+        9.5,
+        "TREND LONG",
+        ha="right",
+        va="top",
+        fontsize=8,
+        fontweight="bold",
+        color="#267326",
+    )
+
+    axis.text(
+        -9.8,
+        9.5,
+        "SHORT SQUEEZE",
+        ha="left",
+        va="top",
+        fontsize=8,
+        fontweight="bold",
+        color="#267326",
+    )
+
+    axis.text(
+        9.8,
+        -9.5,
+        "LONG UNWIND",
+        ha="right",
+        va="bottom",
+        fontsize=8,
+        fontweight="bold",
+        color="#9C0006",
+    )
+
+    axis.text(
+        -9.8,
+        -9.5,
+        "BEAR TREND",
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        fontweight="bold",
+        color="#9C0006",
+    )
+
+    axis.legend(
+        loc="lower left",
+        fontsize=8,
+        frameon=True,
+    )
+
+
+# =============================================================================
+# OPPORTUNITY TABLES
+# =============================================================================
+
+def opportunity_tables(
+    ui_report: pd.DataFrame,
+    number_to_show: int = 5,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Build ranked opportunity and risk tables.
+    """
+    columns = [
+        "label",
+        "POSITIONING",
+        "POSITIONING_CHG_1M",
+        "MOMENTUM",
+        "MOMENTUM_CHG_1M",
+        "COMBINED",
+        "SIGNAL",
+    ]
+
+    available_columns = [
+        column
+        for column in columns
+        if column in ui_report.columns
+    ]
+
+    strongest_bullish = (
+        ui_report
+        .nlargest(
+            number_to_show,
+            "COMBINED",
+        )
+        [available_columns]
+    )
+
+    strongest_bearish = (
+        ui_report
+        .nsmallest(
+            number_to_show,
+            "COMBINED",
+        )
+        [available_columns]
+    )
+
+    short_squeeze = (
+        ui_report[
+            (ui_report["POSITIONING"] <= -2)
+            &
+            (ui_report["MOMENTUM"] >= 2)
+        ]
+        [available_columns]
+        .sort_values(
+            "MOMENTUM",
+            ascending=False,
+        )
+    )
+
+    crowded_long_risk = (
+        ui_report[
+            (ui_report["POSITIONING"] >= 2)
+            &
+            (ui_report["MOMENTUM"] <= -2)
+        ]
+        [available_columns]
+        .sort_values(
+            "POSITIONING",
+            ascending=False,
+        )
+    )
+
+    strongest_momentum = (
+        ui_report
+        .nlargest(
+            number_to_show,
+            "MOMENTUM",
+        )
+        [available_columns]
+    )
+
+    weakest_momentum = (
+        ui_report
+        .nsmallest(
+            number_to_show,
+            "MOMENTUM",
+        )
+        [available_columns]
+    )
+
+    return {
+        "Strongest bullish": strongest_bullish,
+        "Strongest bearish": strongest_bearish,
+        "Short-squeeze watch": short_squeeze,
+        "Crowded-long risk": crowded_long_risk,
+        "Strongest momentum": strongest_momentum,
+        "Weakest momentum": weakest_momentum,
+    }
+
+
+# =============================================================================
+# MAIN DASHBOARD
+# =============================================================================
+
+def plot_main_dashboard(
+    ui_report: pd.DataFrame,
+) -> None:
+    """
+    Display the one-screen morning dashboard.
+
+    Layout:
+        Left:
+            positioning vs momentum quadrant
+
+        Upper right:
+            composite heatmap
+
+        Lower right:
+            ranked actionable signals
+    """
+    figure = plt.figure(
+        figsize=(17, 10)
+    )
+
+    grid = figure.add_gridspec(
+        2,
+        2,
+        width_ratios=[
+            1.2,
+            1.0,
+        ],
+        height_ratios=[
+            1,
+            1,
+        ],
+    )
+
+    quadrant_axis = figure.add_subplot(
+        grid[:, 0]
+    )
+
+    heatmap_axis = figure.add_subplot(
+        grid[0, 1]
+    )
+
+    summary_axis = figure.add_subplot(
+        grid[1, 1]
+    )
+
+    plot_positioning_momentum_quadrant(
+        ui_report,
+        quadrant_axis,
+    )
+
+    plot_composite_heatmap(
+        ui_report,
+        heatmap_axis,
+    )
+
+    ranked = (
+        ui_report
+        .sort_values(
+            "ABS_EXTREME",
+            ascending=False,
+        )
+        .head(8)
+    )
+
+    summary_axis.axis("off")
+
+    summary_lines = [
+        "MOST ACTIONABLE CURRENT STATES",
+        "",
+    ]
+
+    for symbol, row in ranked.iterrows():
+
+        positioning = row.get(
+            "POSITIONING",
+            np.nan,
+        )
+
+        momentum = row.get(
+            "MOMENTUM",
+            np.nan,
+        )
+
+        positioning_text = (
+            "   NA"
+            if pd.isna(positioning)
+            else f"{positioning:+5.1f}"
+        )
+
+        momentum_text = (
+            "   NA"
+            if pd.isna(momentum)
+            else f"{momentum:+5.1f}"
+        )
+
+        summary_lines.append(
+            f"{symbol:<5}  "
+            f"Pos {positioning_text}  "
+            f"Mom {momentum_text}   "
+            f"{row['SIGNAL']}"
+        )
+
+    summary_axis.text(
+        0.0,
+        1.0,
+        "\n".join(summary_lines),
+        va="top",
+        family="monospace",
+        fontsize=11,
+    )
+
+    figure.suptitle(
+        (
+            "Positioning & Momentum Trader Dashboard"
+            f" | {date.today().isoformat()}"
+        ),
+        fontsize=16,
+        fontweight="bold",
+    )
+
+    plt.tight_layout(
+        rect=(0, 0, 1, 0.96)
+    )
+
+    plt.show()
+
+
+# =============================================================================
+# INSTRUMENT DETAIL VIEW
+# =============================================================================
+
+def plot_instrument_detail(
+    symbol: str,
+    ui_report: pd.DataFrame,
+    histories: Dict[str, pd.DataFrame],
+) -> None:
+    """
+    Plot price, positioning and momentum history for one instrument.
+    """
+    history = histories.get(symbol)
+
+    if history is None or history.empty:
+        print(
+            f"No signal history available for {symbol}."
+        )
+        return
+
+    figure, axes = plt.subplots(
+        3,
+        1,
+        figsize=(13, 9),
+        sharex=True,
+        gridspec_kw={
+            "height_ratios": [
+                1.3,
+                1,
+                1,
+            ]
+        },
+    )
+
+    price_axis = axes[0]
+    positioning_axis = axes[1]
+    momentum_axis = axes[2]
+
+    if "price" in history.columns:
+
+        history["price"].plot(
+            ax=price_axis,
+            color="black",
+            linewidth=1.2,
+        )
+
+    price_axis.set_title(
+        f"{symbol} | Price and Signal History",
+        fontweight="bold",
+    )
+
+    price_axis.set_ylabel("Price")
+
+    positioning_lines = (
+        (
+            "POSITIONING",
+            "#4472C4",
+        ),
+        (
+            "cftc_positioning",
+            "#70AD47",
+        ),
+        (
+            "options_skew",
+            "#ED7D31",
+        ),
+    )
+
+    for column, colour in positioning_lines:
+
+        if column in history.columns:
+
+            history[column].plot(
+                ax=positioning_axis,
+                label=column,
+                color=colour,
+                linewidth=1.0,
+            )
+
+    positioning_axis.set_ylabel(
+        "Positioning"
+    )
+
+    positioning_axis.set_ylim(
+        -10.5,
+        10.5,
+    )
+
+    positioning_axis.legend(
+        loc="upper left",
+        ncol=3,
+        fontsize=8,
+    )
+
+    momentum_lines = (
+        (
+            "MOMENTUM",
+            "#C00000",
+        ),
+        (
+            "rsi",
+            "#7030A0",
+        ),
+        (
+            "dev_20d",
+            "#5B9BD5",
+        ),
+        (
+            "dev_100d",
+            "#A5A5A5",
+        ),
+    )
+
+    for column, colour in momentum_lines:
+
+        if column in history.columns:
+
+            history[column].plot(
+                ax=momentum_axis,
+                label=column,
+                color=colour,
+                linewidth=1.0,
+            )
+
+    momentum_axis.set_ylabel(
+        "Momentum"
+    )
+
+    momentum_axis.set_ylim(
+        -10.5,
+        10.5,
+    )
+
+    momentum_axis.legend(
+        loc="upper left",
+        ncol=4,
+        fontsize=8,
+    )
+
+    for axis in (
+        positioning_axis,
+        momentum_axis,
+    ):
+
+        axis.axhline(
+            0,
+            color="grey",
+            linewidth=0.7,
+        )
+
+        axis.axhline(
+            5,
+            color="grey",
+            linewidth=0.5,
+            linestyle="--",
+        )
+
+        axis.axhline(
+            -5,
+            color="grey",
+            linewidth=0.5,
+            linestyle="--",
+        )
+
+    for axis in axes:
+        axis.grid(alpha=0.2)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# =============================================================================
+# STYLED DATAFRAME DISPLAY
+# =============================================================================
+
+def _display_styled_frame(
+    frame: pd.DataFrame,
+    decimals: int = 2,
+) -> None:
+    """
+    Display a DataFrame with score heatmap formatting in BQuant/Jupyter.
+    """
+    if frame is None or frame.empty:
+        display(
+            pd.DataFrame(
+                {"Message": ["No matching data available."]}
+            )
+        )
+        return
+
+    numeric_columns = frame.select_dtypes(
+        include=[np.number]
+    ).columns
+
+    format_dictionary = {
+        column: f"{{:.{decimals}f}}"
+        for column in numeric_columns
+    }
+
+    score_columns = [
+        column
+        for column in (
+            "POSITIONING",
+            "MOMENTUM",
+            "COMBINED",
+        )
+        if column in frame.columns
+    ]
+
+    styled = frame.style.format(
+        format_dictionary,
+        na_rep="-",
+    )
+
+    if score_columns:
+
+        styled = styled.background_gradient(
+            cmap="RdYlGn",
+            vmin=-10,
+            vmax=10,
+            subset=score_columns,
+        )
+
+    display(styled)
+
+
+# =============================================================================
+# BQUANT FOUR-TAB UI
+# =============================================================================
+
+def launch_tracker_ui(
+    report: pd.DataFrame,
+    histories: Dict[str, pd.DataFrame],
+):
+    """
+    Launch the four-tab BQuant/Jupyter interface.
+
+    Tabs:
+        Dashboard
+        Instrument detail
+        Forward returns
+        Opportunities
+
+    Falls back to a static matplotlib dashboard if ipywidgets is unavailable.
+    """
+    ui_report = enrich_report_for_ui(
+        report,
+        histories,
+    )
+
+    expectancy = build_expectancy_table(
+        histories
+    )
+
+    if not _WIDGETS_AVAILABLE:
+
+        print(
+            "ipywidgets is unavailable. "
+            "Showing the static dashboard instead."
+        )
+
+        plot_main_dashboard(ui_report)
+
+        return ui_report, expectancy
+
+    symbols = [
+        symbol
+        for symbol in ui_report.index
+        if symbol in histories
+    ]
+
+    if not symbols:
+
+        print(
+            "No instrument histories are available "
+            "for the interactive interface."
+        )
+
+        plot_main_dashboard(ui_report)
+
+        return ui_report, expectancy
+
+    instrument_selector = widgets.Dropdown(
+        options=symbols,
+        value=symbols[0],
+        description="Instrument:",
+        layout=widgets.Layout(
+            width="320px"
+        ),
+    )
+
+    refresh_button = widgets.Button(
+        description="Refresh selected",
+        button_style="primary",
+        icon="refresh",
+    )
+
+    dashboard_output = widgets.Output()
+    detail_output = widgets.Output()
+    forward_output = widgets.Output()
+    opportunities_output = widgets.Output()
+
+    def render_dashboard() -> None:
+
+        with dashboard_output:
+
+            clear_output(wait=True)
+
+            plot_main_dashboard(
+                ui_report
+            )
+
+            dashboard_columns = [
+                "RANK",
+                "label",
+                "asset_class",
+
+                "POSITIONING",
+                "POSITIONING_PCTL",
+                "POSITIONING_CHG_1W",
+                "POSITIONING_CHG_1M",
+                "POSITIONING_CHG_3M",
+
+                "MOMENTUM",
+                "MOMENTUM_PCTL",
+                "MOMENTUM_CHG_1W",
+                "MOMENTUM_CHG_1M",
+                "MOMENTUM_CHG_3M",
+
+                "COMBINED",
+                "SIGNAL",
+            ]
+
+            dashboard_columns = [
+                column
+                for column in dashboard_columns
+                if column in ui_report.columns
+            ]
+
+            _display_styled_frame(
+                ui_report[dashboard_columns]
+            )
+
+    def render_selected(*_) -> None:
+
+        symbol = instrument_selector.value
+
+        if symbol is None:
+            return
+
+        history = histories.get(symbol)
+
+        statistics = forward_return_analysis(
+            history
+        )
+
+        with detail_output:
+
+            clear_output(wait=True)
+
+            plot_instrument_detail(
+                symbol,
+                ui_report,
+                histories,
+            )
+
+            interpretation = trader_interpretation(
+                symbol,
+                ui_report.loc[symbol],
+                statistics,
+            )
+
+            print(interpretation)
+
+        with forward_output:
+
+            clear_output(wait=True)
+
+            print(
+                f"{symbol} | Forward Returns Conditional "
+                f"on Current Score Buckets"
+            )
+
+            print()
+
+            print(
+                "Returns are historical outcomes rather than forecasts."
+            )
+
+            print(
+                "Reliable=True requires at least "
+                f"{UI_MIN_FORWARD_OBSERVATIONS} observations."
+            )
+
+            print(
+                "Historical observations can overlap, so the count "
+                "is not a count of fully independent events."
+            )
+
+            print()
+
+            _display_styled_frame(
+                statistics
+            )
+
+    def render_opportunities() -> None:
+
+        with opportunities_output:
+
+            clear_output(wait=True)
+
+            tables = opportunity_tables(
+                ui_report
+            )
+
+            for heading, table in tables.items():
+
+                print()
+                print(heading.upper())
+                print("=" * len(heading))
+
+                _display_styled_frame(
+                    table
+                )
+
+    instrument_selector.observe(
+        render_selected,
+        names="value",
+    )
+
+    refresh_button.on_click(
+        render_selected
+    )
+
+    render_dashboard()
+    render_selected()
+    render_opportunities()
+
+    tabs = widgets.Tab(
+        children=[
+            dashboard_output,
+            detail_output,
+            forward_output,
+            opportunities_output,
+        ]
+    )
+
+    tab_titles = [
+        "Dashboard",
+        "Instrument detail",
+        "Forward returns",
+        "Opportunities",
+    ]
+
+    for index, title in enumerate(tab_titles):
+
+        tabs.set_title(
+            index,
+            title,
+        )
+
+    controls = widgets.HBox(
+        [
+            instrument_selector,
+            refresh_button,
+        ]
+    )
+
+    display(
+        widgets.VBox(
+            [
+                controls,
+                tabs,
+            ]
+        )
+    )
+
+    return ui_report, expectancy
+
+
+# =============================================================================
+# REPLACEMENT MAIN FUNCTION
+# =============================================================================
 
 def main() -> None:
-    rows, histories = [], {}
+    """
+    Run the tracker, export the results and display the enhanced UI.
+    """
+    rows = []
+    histories = {}
 
     for symbol, instrument in INSTRUMENTS.items():
-        row, history = process_instrument(symbol, instrument)
+
+        row, history = process_instrument(
+            symbol,
+            instrument,
+        )
+
         rows.append(row)
+
         if history is not None:
             histories[symbol] = history
 
-    report = pd.DataFrame(rows).set_index("symbol").reindex(columns=REPORT_COLUMNS)
-
-    print("\nCurrent report:")
-    print(report.round(2))
-    print()
-    flag_extremes(report)
-    plot_rsi_heatmap(report, ncols=5)
-
-    run_date = date.today().isoformat()
-    print()
-
-    report_path = f"sfxpm_report_{run_date}.csv"
-    report.to_csv(report_path)
-    print(f"Saved {report_path}")
-
-    score_log = append_score_history(report, run_date)
-    print(
-        f"Saved {_storage_path(SCORE_HISTORY_PATH)} "
-        f"({score_log['run_date'].nunique()} snapshot date(s), {len(score_log)} rows)"
+    report = (
+        pd.DataFrame(rows)
+        .set_index("symbol")
+        .reindex(columns=REPORT_COLUMNS)
     )
 
-    # The full daily score series, recomputed from history each run. Not needed
-    # for the tracker itself -- it is here so you can chart how a score evolved
-    # without waiting for weekly snapshots to accumulate. Set False to skip.
+    ui_report = enrich_report_for_ui(
+        report,
+        histories,
+    )
+
+    expectancy = build_expectancy_table(
+        histories
+    )
+
+    print("\nCurrent ranked report:")
+
+    console_columns = [
+        "RANK",
+        "label",
+
+        "POSITIONING",
+        "POSITIONING_PCTL",
+        "POSITIONING_CHG_1W",
+        "POSITIONING_CHG_1M",
+        "POSITIONING_CHG_3M",
+
+        "MOMENTUM",
+        "MOMENTUM_PCTL",
+        "MOMENTUM_CHG_1W",
+        "MOMENTUM_CHG_1M",
+        "MOMENTUM_CHG_3M",
+
+        "COMBINED",
+        "SIGNAL",
+    ]
+
+    console_columns = [
+        column
+        for column in console_columns
+        if column in ui_report.columns
+    ]
+
+    print(
+        ui_report[
+            console_columns
+        ].round(2)
+    )
+
+    print()
+
+    flag_extremes(report)
+
+    run_date = date.today().isoformat()
+
+    # -------------------------------------------------------------------------
+    # ENHANCED CURRENT REPORT EXPORT
+    # -------------------------------------------------------------------------
+
+    report_path = (
+        f"sfxpm_report_{run_date}.csv"
+    )
+
+    ui_report.to_csv(
+        report_path
+    )
+
+    print(
+        f"Saved {report_path}"
+    )
+
+    # -------------------------------------------------------------------------
+    # FORWARD EXPECTANCY EXPORT
+    # -------------------------------------------------------------------------
+
+    expectancy_path = (
+        f"sfxpm_forward_expectancy_{run_date}.csv"
+    )
+
+    expectancy.to_csv(
+        expectancy_path
+    )
+
+    print(
+        f"Saved {expectancy_path}"
+    )
+
+    # -------------------------------------------------------------------------
+    # SCORE SNAPSHOT HISTORY
+    # -------------------------------------------------------------------------
+
+    score_log = append_score_history(
+        report,
+        run_date,
+    )
+
+    print(
+        f"Saved {_storage_path(SCORE_HISTORY_PATH)} "
+        f"({score_log['run_date'].nunique()} snapshot date(s), "
+        f"{len(score_log)} rows)"
+    )
+
+    # -------------------------------------------------------------------------
+    # FULL DAILY SIGNAL HISTORY
+    # -------------------------------------------------------------------------
+
     if SAVE_SIGNAL_HISTORY and histories:
-        combined_history = pd.concat(histories, names=["instrument", "date"])
-        path = save_frame(
-            combined_history.reset_index(), f"sfxpm_daily_signal_history_{run_date}"
+
+        combined_history = pd.concat(
+            histories,
+            names=[
+                "instrument",
+                "date",
+            ],
         )
-        print(f"Saved {path}")
+
+        history_path = save_frame(
+            combined_history.reset_index(),
+            f"sfxpm_daily_signal_history_{run_date}",
+        )
+
+        print(
+            f"Saved {history_path}"
+        )
+
+    # -------------------------------------------------------------------------
+    # LAUNCH INTERACTIVE UI
+    # -------------------------------------------------------------------------
+
+    launch_tracker_ui(
+        report,
+        histories,
+    )
 
 
 if __name__ == "__main__":
